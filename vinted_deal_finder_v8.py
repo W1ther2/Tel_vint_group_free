@@ -627,7 +627,7 @@ def main():
         time.sleep(SLEEP_SECONDS)
 
     # Rusiuojame visus alertus pagal kaina (nuo maziausios)
-    alerts.sort(key=lambda a: a[2])
+    alerts.sort(key=lambda a: a["price"])
 
     save_seen(new_seen)
 
