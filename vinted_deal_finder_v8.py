@@ -451,6 +451,46 @@ def detect_foreign_language(*texts):
     return None
 
 
+def stars_line(reputation, feedback_count):
+    """Verčia feedback_reputation (0..1) i žvaigždutes, pvz. '★★★☆☆ (3.1/5, 33 atsiliep.)'."""
+    if reputation is None:
+        return "nėra duomenų"
+    n = max(0, min(5, round(reputation * 5)))
+    stars = "\u2605" * n + "\u2606" * (5 - n)
+    line = stars + f" ({reputation * 5:.1f}/5"
+    if feedback_count is not None:
+        line += f", {feedback_count} atsiliep."
+    return line + ")"
+
+
+def get_seller_info(item):
+    """Grazina (reputation 0..1 arba None, feedback_count arba None)."""
+    user = item.get("user") or {}
+    try:
+        rep = float(user.get("feedback_reputation"))
+    except (TypeError, ValueError):
+        rep = None
+    try:
+        cnt = int(user.get("feedback_count"))
+    except (TypeError, ValueError):
+        cnt = None
+    return rep, cnt
+
+
+def market_median(prices):
+    """Apkarpyta mediana – nukertame 10% pigiausių ir 10% brangiausių,
+    kad vienetiniai 'sukčių' ar šlamšto įkainiai nepaveiktų įverčio."""
+    if not prices:
+        return None
+    prices = sorted(prices)
+    cut = max(1, int(len(prices) * 0.1)) if len(prices) >= 10 else 0
+    trimmed = prices[cut:len(prices) - cut] or prices
+    mid = len(trimmed) // 2
+    if len(trimmed) % 2:
+        return trimmed[mid]
+    return (trimmed[mid - 1] + trimmed[mid]) / 2.0
+
+
 def is_junk(title):
     t = title.lower()
     return any(w in t for w in BLACKLIST_WORDS)
@@ -466,6 +506,24 @@ def send_telegram(text):
             print(f"  ! Telegram klaida: {r.text[:150]}")
     except Exception as e:
         print(f"  ! Nepavyko issiusti Telegram: {e}")
+
+
+def send_telegram_photo(photo_url, caption):
+    """Siunčia nuotrauką su aprašu (kaip pavyzdyje). Jei nepavyksta – tik tekstą."""
+    if not photo_url:
+        send_telegram(caption)
+        return
+    url = "https://api.telegram.org/bot" + BOT_TOKEN + "/sendPhoto"
+    payload = {"chat_id": CHAT_ID, "photo": photo_url, "caption": caption,
+               "parse_mode": "HTML"}
+    try:
+        r = requests.post(url, data=payload, timeout=15)
+        if r.status_code != 200:
+            print(f"  ! Telegram photo klaida: {r.text[:120]} – siunčiu be nuotraukos")
+            send_telegram(caption)
+    except Exception as e:
+        print(f"  ! Nepavyko issiusti nuotraukos: {e}")
+        send_telegram(caption)
 
 
 def main():
@@ -486,6 +544,15 @@ def main():
         items = fetch_items(q, PAGES)
         total_fetched += len(items)
         fresh = 0
+
+        # Rinkos vertė: mediana iš VISŲ šio modelio skelbimų kainų
+        all_prices = []
+        for it in items:
+            if isinstance(it, dict):
+                ap = get_price(it)
+                if ap and ap > 0:
+                    all_prices.append(ap)
+        mkt = market_median(all_prices)
         excluded_by_country = 0
         excluded_foreign = 0
         excluded_price_digit = 0
@@ -543,7 +610,15 @@ def main():
             if is_junk(title):
                 continue
 
-            alerts.append((q, title, price, full_url))
+            rep, cnt = get_seller_info(item)
+            photo = og.get("image") or ""
+            if photo.startswith("/"):
+                photo = BASE + photo
+            alerts.append({
+                "query": q, "title": title, "price": price,
+                "url": full_url, "desc": description,
+                "rep": rep, "cnt": cnt, "market": mkt, "photo": photo,
+            })
             fresh += 1
             if DEBUG:
                 print(f"  [DEBUG] PRIIMTA (salis={country}): {title[:60]}")
@@ -571,10 +646,29 @@ def main():
         print("[DRY_RUN] Pakeisk DRY_RUN = False ir paleisk dar karta.")
         return
 
-    for q, title, price, full_url in alerts:
-        msg = "<b>" + q + "</b> - " + str(round(price)) + " EUR\n" + title + "\n" + full_url
-        send_telegram(msg)
-        print(f"  -> {q} {price:.0f} EUR: {title[:50]}")
+    for a in alerts:
+        title_esc = html.escape(a["title"][:80])
+        # Aprašymo ištrauka (pirmi ~140 simbolių)
+        desc = " ".join((a["desc"] or "").split())[:140]
+        desc_esc = html.escape(desc) + ("…" if len((a["desc"] or "")) > 140 else "")
+
+        lines = [
+            "<b>" + html.escape(a["query"]) + "</b> | <b>" + f'{a["price"]:.0f} €' + "</b>",
+        ]
+        if desc_esc:
+            lines.append(desc_esc)
+        lines.append("")
+        lines.append("<b>⭐ Pardavėjas:</b> " + stars_line(a["rep"], a["cnt"]))
+        if a["market"]:
+            profit = a["market"] - a["price"]
+            lines.append("<b>📊 Rinkos vertė:</b> ~" + f'{a["market"]:.0f} €')
+            lines.append("<b>💰 Planuojamas pelnas:</b> ~" + f'{profit:+.0f} €')
+        lines.append("")
+        lines.append('<a href="' + a["url"] + '">Atidaryti skelbimą</a>')
+
+        msg = "\n".join(lines)
+        send_telegram_photo(a["photo"], msg)
+        print(f'  -> {a["query"]} {a["price"]:.0f} EUR: {a["title"][:50]}')
 
     print(f"Issiusta {len(alerts)} alert'u.")
 
