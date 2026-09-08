@@ -25,9 +25,6 @@ TOPIC_ID = 1
 DEFAULTS = {
     "MODELS": [
         {"query": "iPhone 13",     "min_price": 100, "max_price": 160},
-        {"query": "iPhone 13 Pro", "min_price": 100, "max_price": 200},
-        {"query": "iPhone 14",     "min_price": 100, "max_price": 200},
-        {"query": "iPhone 14 Pro", "min_price": 100, "max_price": 350},
     ],
     "BLACKLIST_WORDS": [
         "case", "deklas", "cover", "custodia", "coque",
