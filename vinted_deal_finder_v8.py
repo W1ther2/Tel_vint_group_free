@@ -15,6 +15,7 @@ import html
 # Repo -> Settings -> Secrets and variables -> Actions -> sukurk BOT_TOKEN ir CHAT_ID.
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 CHAT_ID   = os.environ.get("CHAT_ID", "")
+TOPIC_ID = 1
 
 # ================== KONFIGURACIJA ==================
 # VISKAS kraunama is config.json failo (saugomo tame paciame repo).
