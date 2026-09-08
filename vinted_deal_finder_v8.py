@@ -13,8 +13,8 @@ import html
 # ========== SUSIKONFIGUROK SITAS EILUTES ==========
 # BOT_TOKEN ir CHAT_ID imami is aplinkos kintamuju (GitHub Secrets).
 # Repo -> Settings -> Secrets and variables -> Actions -> sukurk BOT_TOKEN ir CHAT_ID.
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-CHAT_ID   = os.environ.get("CHAT_ID", "")
+BOT_TOKEN = os.environ.get("BOT", "")
+CHAT_ID   = os.environ.get("TEL", "")
 TOPIC_ID = 1
 
 # ================== KONFIGURACIJA ==================
