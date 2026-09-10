@@ -35,5 +35,6 @@
   "DRY_RUN": false,
   "DEBUG": false,
   "SEEN_MAX_AGE_DAYS": 7,
-  "SEEN_MAX_ENTRIES": 10000
+  "SEEN_MAX_ENTRIES": 10000,
+  "ALLOWED_CONDITIONS": []
 }
