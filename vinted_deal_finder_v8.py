@@ -38,6 +38,10 @@ DEFAULTS = {
     "REQUIRE_KNOWN_COUNTRY": False,
     "ONLY_LITHUANIAN_TEXT": True,
     "PRICE_LAST_DIGITS": [],
+    # Kuriu bukliu skelbimus leisti. Tuscia = leidziam visas. Priimami arba
+    # skaitiniai ID (2=Labai gera, 3=Gera), arba lietuviski pavadinimai,
+    # pvz. ["Labai gera", "Gera"] - kaip Vinted svetaines "bukle" filtras.
+    "ALLOWED_CONDITIONS": [],
     "PAGES": 3,
     "SLEEP_SECONDS": 3,
     "DRY_RUN": False,
@@ -73,6 +77,7 @@ _CFG = load_config()
 MODELS = _CFG["MODELS"]
 BLACKLIST_WORDS = _CFG["BLACKLIST_WORDS"]
 ALLOWED_COUNTRY_CODES = list(_CFG["ALLOWED_COUNTRY_CODES"])
+ALLOWED_CONDITIONS = list(_CFG.get("ALLOWED_CONDITIONS") or [])
 REQUIRE_KNOWN_COUNTRY = bool(_CFG["REQUIRE_KNOWN_COUNTRY"])
 ONLY_LITHUANIAN_TEXT = bool(_CFG["ONLY_LITHUANIAN_TEXT"])
 PRICE_LAST_DIGITS = set(_CFG["PRICE_LAST_DIGITS"])
@@ -356,6 +361,44 @@ def get_country_code(item):
     return domain.upper()
 
 
+# Vinted "status_id" reiksmes stabilios visose salyse (patvirtinta per keliu
+# nepriklausomu Vinted API dokumentacijos saltiniu).
+STATUS_LABELS_LT = {
+    6: "Nauja su etiketėmis",
+    1: "Nauja be etikečių",
+    2: "Labai gera",
+    3: "Gera",
+    4: "Patenkinama",
+    7: "Neveikianti",
+}
+
+_debug_status_printed = False
+
+
+def get_condition(item):
+    """Grazina (raktas, lietuviskas_pavadinimas) bukles grupavimui/rodymui.
+
+    Katalogo API skelbimo objekte bukle gali ateiti kaip:
+    - 'status_id' (skaitinis, stabilus visose rinkose - pageidautina)
+    - 'status'    (jau tekstinis pavadinimas, lokalizuotas pagal Accept-Language)
+    DEMESIO: tiksliai, kuris laukas realiai ateina is /api/v2/catalog/items,
+    neturiu galimybes pats patikrinti - DEBUG=True parodys abu laukus pirmam
+    skelbimui, kad galetume patvirtinti/pataisyti."""
+    global _debug_status_printed
+    status_id = item.get("status_id")
+    status_text = item.get("status")
+    if DEBUG and not _debug_status_printed:
+        print(f"  [DEBUG] bukle: status={status_text!r}, status_id={status_id!r}")
+        _debug_status_printed = True
+
+    label = STATUS_LABELS_LT.get(status_id) if isinstance(status_id, int) else None
+    if not label:
+        label = status_text if isinstance(status_text, str) and status_text else "nežinoma"
+
+    key = status_id if isinstance(status_id, int) else label
+    return key, label
+
+
 # --- Kalbos aptikimas -------------------------------------------------
 # Tikslas: praleisti tik lietuviskus (arba kalbos pozymiu neturincius)
 # skelbimus, atmesti aiskiai uzsienietiskus.
@@ -582,17 +625,20 @@ def main():
         total_fetched += len(items)
         fresh = 0
 
-        # Rinkos vertė: mediana iš VISŲ šio modelio skelbimų kainų
-        all_prices = []
+        # Rinkos verte: MEDIANA ATSKIRAI KIEKVIENAI BUKLEI (kad "Gera" nebutu
+        # lyginama su "Nauja su etiketemis" kaina - tai iskraipytu pelno iverti).
+        prices_by_condition = {}
         for it in items:
             if isinstance(it, dict):
                 ap = get_price(it)
                 if ap and ap > 0:
-                    all_prices.append(ap)
-        mkt = market_median(all_prices)
+                    ckey, _ = get_condition(it)
+                    prices_by_condition.setdefault(ckey, []).append(ap)
+        market_by_condition = {k: market_median(v) for k, v in prices_by_condition.items()}
         excluded_by_country = 0
         excluded_foreign = 0
         excluded_price_digit = 0
+        excluded_condition = 0
 
         for item in items:
             if not isinstance(item, dict):
@@ -611,6 +657,12 @@ def main():
 
             if PRICE_LAST_DIGITS and int(price) % 10 not in PRICE_LAST_DIGITS:
                 excluded_price_digit += 1
+                continue
+
+            # Bukle jau yra kataloginiame atsakyme - papildomos uzklausos nereikia.
+            cond_key, cond_label = get_condition(item)
+            if ALLOWED_CONDITIONS and cond_key not in ALLOWED_CONDITIONS and cond_label not in ALLOWED_CONDITIONS:
+                excluded_condition += 1
                 continue
 
             title = item.get("title") or item.get("name") or "?"
@@ -663,13 +715,15 @@ def main():
             alerts.append({
                 "query": q, "title": title, "price": price,
                 "url": full_url, "desc": description,
-                "rep": rep, "cnt": cnt, "market": mkt, "photo": photo,
+                "rep": rep, "cnt": cnt,
+                "market": market_by_condition.get(cond_key), "photo": photo,
+                "condition": cond_label,
             })
             fresh += 1
             if DEBUG:
-                print(f"  [DEBUG] PRIIMTA (salis={country}): {title[:60]}")
+                print(f"  [DEBUG] PRIIMTA (salis={country}, bukle={cond_label}): {title[:60]}")
 
-        print(f"  Gauta: {len(items)}, tinkama: {fresh}, atmesta salis: {excluded_by_country}, atmesta uzsienio kalba: {excluded_foreign}, atmesta kainos skaitmuo: {excluded_price_digit}")
+        print(f"  Gauta: {len(items)}, tinkama: {fresh}, atmesta salis: {excluded_by_country}, atmesta uzsienio kalba: {excluded_foreign}, atmesta kainos skaitmuo: {excluded_price_digit}, atmesta bukle: {excluded_condition}")
         time.sleep(SLEEP_SECONDS)
 
     # Rusiuojame visus alertus pagal kaina (nuo maziausios)
@@ -704,10 +758,11 @@ def main():
         if desc_esc:
             lines.append(desc_esc)
         lines.append("")
+        lines.append("<b>📦 Būklė:</b> " + html.escape(a["condition"]))
         lines.append("<b>⭐ Pardavėjas:</b> " + stars_line(a["rep"], a["cnt"]))
         if a["market"]:
             profit = a["market"] - a["price"]
-            lines.append("<b>📊 Rinkos vertė:</b> ~" + f'{a["market"]:.0f} €')
+            lines.append("<b>📊 Rinkos vertė (tos pačios būklės):</b> ~" + f'{a["market"]:.0f} €')
             lines.append("<b>💰 Planuojamas pelnas:</b> ~" + f'{profit:+.0f} €')
         lines.append("")
         lines.append('<a href="' + a["url"] + '">Atidaryti skelbimą</a>')
