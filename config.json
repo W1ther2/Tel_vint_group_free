@@ -24,7 +24,7 @@
   "ALLOWED_COUNTRY_CODES": [
     "LT"
   ],
-  "ONLY_LITHUANIAN_TEXT": true,
+  "ONLY_LITHUANIAN_TEXT": false,
   "PRICE_LAST_DIGITS": [
     0,
     5,
