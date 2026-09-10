@@ -463,18 +463,55 @@ def stars_line(reputation, feedback_count):
     return line + ")"
 
 
-def get_seller_info(item):
-    """Grazina (reputation 0..1 arba None, feedback_count arba None)."""
-    user = item.get("user") or {}
+def get_seller_info(user_info):
+    """Grazina (reputation 0..1 arba None, feedback_count arba None) is
+    PILNO pardavejo profilio atsakymo (fetch_user_info rezultato) - kataloginiame
+    'user' objekte siu lauku NERA (patvirtinta DEBUG isvestimi)."""
     try:
-        rep = float(user.get("feedback_reputation"))
+        rep = float(user_info.get("feedback_reputation"))
     except (TypeError, ValueError):
         rep = None
     try:
-        cnt = int(user.get("feedback_count"))
+        cnt = int(user_info.get("feedback_count"))
     except (TypeError, ValueError):
         cnt = None
     return rep, cnt
+
+
+_debug_userinfo_printed = False
+
+
+def fetch_user_info(user_id):
+    """Pilnas pardavejo profilis - /api/v2/users/{id}. Katalogo skelbimuose
+    ideklota 'user' objekte (id/login/profile_url/photo/business) NERA
+    feedback_reputation/feedback_count/country_code lauku - jie yra TIK siame
+    atskirame endpoint'e (patvirtinta per keliu nepriklausomu Vinted API
+    "wrapper'iu" dokumentacija). Tai KITAS endpoint'as nei /api/v2/items/{id}
+    (kuris zinomai blokuojamas 403) - garantijos, kad ir sitas neblokuojamas,
+    neturiu, tad DEBUG parodys realu atsakyma pirmam iskvietimui."""
+    global _debug_userinfo_printed
+    if not user_id:
+        return {}
+    url = f"{BASE}/api/v2/users/{user_id}"
+    try:
+        resp = session.get(url, headers=HEADERS, timeout=20)
+        if resp.status_code != 200:
+            if DEBUG:
+                print(f"  [DEBUG] pardavejo {user_id} info uzklausa: HTTP {resp.status_code}")
+            return {}
+        data = resp.json()
+        info = data.get("user") if isinstance(data, dict) else None
+        if info is None and isinstance(data, dict):
+            info = data
+        if DEBUG and not _debug_userinfo_printed:
+            print(f"  [DEBUG] pardavejo {user_id} pilnas atsakymas:")
+            print(" ", json.dumps(data, ensure_ascii=False)[:2000])
+            _debug_userinfo_printed = True
+        return info or {}
+    except Exception as e:
+        if DEBUG:
+            print(f"  [DEBUG] nepavyko gauti pardavejo {user_id} info: {e}")
+        return {}
 
 
 def market_median(prices):
@@ -589,9 +626,18 @@ def main():
                 title = og["title"]
             description = og.get("description") or ""
 
-            # OG zymos salies neduoda, tad sita liekam prie kataloginio
-            # (nors, kaip aptikta, jis, atrodo, visada rodo LT).
-            country = get_country_code(item)
+            # Pilnas pardavejo profilis - jame (skirtingai nei kataloginiame
+            # 'user' objekte) YRA reputacija, atsiliepimu skaicius IR salies
+            # kodas. Jei sis endpoint'as uzblokuojamas ar negrazina salies,
+            # grieztame prie senos profile_url euristikos (atrodo, visada LT).
+            catalog_user = item.get("user") or {}
+            user_id = catalog_user.get("id")
+            user_info = fetch_user_info(user_id)
+            time.sleep(DETAIL_SLEEP_SECONDS)
+
+            country = (user_info.get("country_code") or "").upper() or None
+            if not country:
+                country = get_country_code(item)
             country_ok = (country in ALLOWED_COUNTRY_CODES) if country else (not REQUIRE_KNOWN_COUNTRY)
             if not country_ok:
                 excluded_by_country += 1
@@ -610,7 +656,7 @@ def main():
             if is_junk(title):
                 continue
 
-            rep, cnt = get_seller_info(item)
+            rep, cnt = get_seller_info(user_info)
             photo = og.get("image") or ""
             if photo.startswith("/"):
                 photo = BASE + photo
