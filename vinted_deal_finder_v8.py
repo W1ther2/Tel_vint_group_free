@@ -92,6 +92,7 @@ DRY_RUN = bool(_CFG["DRY_RUN"])
 DEBUG = bool(_CFG["DEBUG"])
 SEEN_MAX_AGE_DAYS = int(_CFG["SEEN_MAX_AGE_DAYS"])
 SEEN_MAX_ENTRIES = int(_CFG["SEEN_MAX_ENTRIES"])
+FETCH_SELLER_INFO = bool(_CFG["FETCH_SELLER_INFO"])   # <-- PRIDĖTA EILUTĖ
 # ===================================================
  
 BASE = "https://www.vinted.lt"
@@ -253,7 +254,7 @@ def fetch_item_page_og(item_id, url_path, max_bytes=200_000):
  
     Todel aprasyma skaitome is vieso skelbimo puslapio OpenGraph <meta> zymu
     (title/description/image/url), kurios visada yra HTML <head> dalyje - siam
-    keliui pakanka atsiusti tik pirmus kelis desimtis KB puslapio, o ne visa
+    keliui pakanka atsiusti tik pirmus kelis desimtus KB puslapio, o ne visa
     JSON API atsakyma, tad jis maziau panasus i "bot" elgesi.
  
     DEMESIO: jei og:description formatas skiriasi nuo tiketo (pvz. Vinted
