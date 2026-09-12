@@ -42,6 +42,11 @@ DEFAULTS = {
     # skaitiniai ID (2=Labai gera, 3=Gera), arba lietuviski pavadinimai,
     # pvz. ["Labai gera", "Gera"] - kaip Vinted svetaines "bukle" filtras.
     "ALLOWED_CONDITIONS": [],
+    # Jei False - visai neuzklausiam /api/v2/users/{id} (pardavejo reputacija,
+    # tikslesnis salies kodas). Isjunk, jei itari, kad sis endpoint'as
+    # sukelia blokavima/rate limit - liks tik sena (nemokama) salies euristika
+    # ir reputacija rodys "nera duomenu".
+    "FETCH_SELLER_INFO": True,
     "PAGES": 3,
     "SLEEP_SECONDS": 3,
     "DRY_RUN": False,
@@ -80,6 +85,7 @@ ALLOWED_COUNTRY_CODES = list(_CFG["ALLOWED_COUNTRY_CODES"])
 ALLOWED_CONDITIONS = list(_CFG.get("ALLOWED_CONDITIONS") or [])
 REQUIRE_KNOWN_COUNTRY = bool(_CFG["REQUIRE_KNOWN_COUNTRY"])
 ONLY_LITHUANIAN_TEXT = bool(_CFG["ONLY_LITHUANIAN_TEXT"])
+FETCH_SELLER_INFO = bool(_CFG.get("FETCH_SELLER_INFO", True))
 PRICE_LAST_DIGITS = set(_CFG["PRICE_LAST_DIGITS"])
 PAGES = int(_CFG["PAGES"])
 SLEEP_SECONDS = int(_CFG["SLEEP_SECONDS"])
@@ -661,13 +667,27 @@ def main():
 
             # Bukle jau yra kataloginiame atsakyme - papildomos uzklausos nereikia.
             cond_key, cond_label = get_condition(item)
-            if ALLOWED_CONDITIONS and cond_key not in ALLOWED_CONDITIONS and cond_label not in ALLOWED_CONDITIONS:
+            # SAUGIKLIS: jei bukles nustatyti nepavyko ("nežinoma" - reiskia
+            # realus API laukas neatitiko lauktos formos), NEATMETAME - kitaip
+            # baltasis sarasas atmestu VISKA, jei musu spejimas apie lauka klaidingas.
+            if ALLOWED_CONDITIONS and cond_label != "nežinoma" and cond_key not in ALLOWED_CONDITIONS and cond_label not in ALLOWED_CONDITIONS:
                 excluded_condition += 1
                 continue
 
             title = item.get("title") or item.get("name") or "?"
             url_path = item.get("url") or item.get("path") or item.get("web_url") or ""
             full_url = BASE + url_path if url_path.startswith("/") else url_path
+
+            # Pirminis (nemokamas, be tinklo) salies patikrinimas - filtruojame
+            # anksti, kad nereiketu tinklo uzklausu skelbimams, kurie bet kokiu
+            # atveju bus atmesti.
+            country = get_country_code(item)
+            country_ok = (country in ALLOWED_COUNTRY_CODES) if country else (not REQUIRE_KNOWN_COUNTRY)
+            if not country_ok:
+                excluded_by_country += 1
+                if DEBUG:
+                    print(f"  [DEBUG] atmesta (salis={country}): {title[:60]}")
+                continue
 
             # Katalogo API nera aprasymo, o JSON detaliu endpoint'as Vinted
             # dazniausiai blokuoja (403). Todel aprasyma skaitome is vieso
@@ -677,25 +697,6 @@ def main():
             if og.get("title"):
                 title = og["title"]
             description = og.get("description") or ""
-
-            # Pilnas pardavejo profilis - jame (skirtingai nei kataloginiame
-            # 'user' objekte) YRA reputacija, atsiliepimu skaicius IR salies
-            # kodas. Jei sis endpoint'as uzblokuojamas ar negrazina salies,
-            # grieztame prie senos profile_url euristikos (atrodo, visada LT).
-            catalog_user = item.get("user") or {}
-            user_id = catalog_user.get("id")
-            user_info = fetch_user_info(user_id)
-            time.sleep(DETAIL_SLEEP_SECONDS)
-
-            country = (user_info.get("country_code") or "").upper() or None
-            if not country:
-                country = get_country_code(item)
-            country_ok = (country in ALLOWED_COUNTRY_CODES) if country else (not REQUIRE_KNOWN_COUNTRY)
-            if not country_ok:
-                excluded_by_country += 1
-                if DEBUG:
-                    print(f"  [DEBUG] atmesta (salis={country}): {title[:60]}")
-                continue
 
             if ONLY_LITHUANIAN_TEXT:
                 lang = detect_foreign_language(title, description)
@@ -707,6 +708,23 @@ def main():
 
             if is_junk(title):
                 continue
+
+            # Pardavejo profilis (reputacija + patikimesnis salies kodas) -
+            # siciama TIK dabar, skelbimams, kurie jau praejo visus kitus
+            # filtrus. Tai naujausias, PAPILDOMAS endpoint'as - jei jis kelia
+            # problemu (blokavimas/rate limit), issijunk per FETCH_SELLER_INFO=false.
+            user_info = {}
+            if FETCH_SELLER_INFO:
+                catalog_user = item.get("user") or {}
+                user_id = catalog_user.get("id")
+                user_info = fetch_user_info(user_id)
+                time.sleep(DETAIL_SLEEP_SECONDS)
+                real_country = (user_info.get("country_code") or "").upper() or None
+                if real_country and real_country not in ALLOWED_COUNTRY_CODES:
+                    excluded_by_country += 1
+                    if DEBUG:
+                        print(f"  [DEBUG] atmesta (tikslesne salis={real_country}): {title[:60]}")
+                    continue
 
             rep, cnt = get_seller_info(user_info)
             photo = og.get("image") or ""
