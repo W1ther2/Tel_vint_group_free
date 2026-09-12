@@ -2,25 +2,25 @@
 """
 Vinted deal finder v4 — taisoma kainu nuskaitymas (API kainos formatas pasikeite).
 """
- 
+
 import requests
 import json
 import os
 import time
 import re
 import html
- 
+
 # ========== SUSIKONFIGUROK SITAS EILUTES ==========
 # BOT_TOKEN ir CHAT_ID imami is aplinkos kintamuju (GitHub Secrets).
 # Repo -> Settings -> Secrets and variables -> Actions -> sukurk BOT_TOKEN ir CHAT_ID.
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 CHAT_ID   = os.environ.get("CHAT_ID", "")
- 
+
 # ================== KONFIGURACIJA ==================
 # VISKAS kraunama is config.json failo (saugomo tame paciame repo).
 # Ten keici: modelius, kainu ribas, filtrus – kodo liesti NEREIKIA.
 # Jei config.json nera ar sugadintas – naudojami apatiniai numatytieji.
- 
+
 DEFAULTS = {
     "MODELS": [
         {"query": "iPhone 13",     "min_price": 100, "max_price": 160},
@@ -42,11 +42,6 @@ DEFAULTS = {
     # skaitiniai ID (2=Labai gera, 3=Gera), arba lietuviski pavadinimai,
     # pvz. ["Labai gera", "Gera"] - kaip Vinted svetaines "bukle" filtras.
     "ALLOWED_CONDITIONS": [],
-    # Jei False - visai neuzklausiam /api/v2/users/{id} (pardavejo reputacija,
-    # tikslesnis salies kodas). Isjunk, jei itari, kad sis endpoint'as
-    # sukelia blokavima/rate limit - liks tik sena (nemokama) salies euristika
-    # ir reputacija rodys "nera duomenu".
-    "FETCH_SELLER_INFO": True,
     "PAGES": 3,
     "SLEEP_SECONDS": 3,
     "DRY_RUN": False,
@@ -54,11 +49,11 @@ DEFAULTS = {
     "SEEN_MAX_AGE_DAYS": 7,
     "SEEN_MAX_ENTRIES": 10000,
 }
- 
+
 CONFIG_FILE = "config.json"
 SEEN_FILE = "seen.json"
- 
- 
+
+
 def load_config():
     cfg = dict(DEFAULTS)
     if os.path.exists(CONFIG_FILE):
@@ -75,10 +70,10 @@ def load_config():
     else:
         print(f"! {CONFIG_FILE} nerastas – naudojami numatytieji.")
     return cfg
- 
- 
+
+
 _CFG = load_config()
- 
+
 MODELS = _CFG["MODELS"]
 BLACKLIST_WORDS = _CFG["BLACKLIST_WORDS"]
 ALLOWED_COUNTRY_CODES = list(_CFG["ALLOWED_COUNTRY_CODES"])
@@ -92,11 +87,10 @@ DRY_RUN = bool(_CFG["DRY_RUN"])
 DEBUG = bool(_CFG["DEBUG"])
 SEEN_MAX_AGE_DAYS = int(_CFG["SEEN_MAX_AGE_DAYS"])
 SEEN_MAX_ENTRIES = int(_CFG["SEEN_MAX_ENTRIES"])
-FETCH_SELLER_INFO = bool(_CFG["FETCH_SELLER_INFO"])   # <-- PRIDĖTA EILUTĖ
 # ===================================================
- 
+
 BASE = "https://www.vinted.lt"
- 
+
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                   "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -105,12 +99,12 @@ HEADERS = {
     "Accept-Language": "lt-LT,lt;q=0.9,en;q=0.8",
     "Referer": BASE + "/",
 }
- 
+
 session = requests.Session()
 _debug_price_printed = False
 _debug_user_printed = False
- 
- 
+
+
 def init_session():
     try:
         r = session.get(BASE + "/", headers=HEADERS, timeout=20)
@@ -118,11 +112,11 @@ def init_session():
     except Exception as e:
         print(f"! Nepavyko pradeti sesijos: {e}")
     time.sleep(2)
- 
- 
+
+
 def load_seen():
     """Grazina zodyna {skelbimo_id: laiko_zyme}.
- 
+
     Palaiko ir senaji formata (paprastas ID sarasas) – konvertuoja automatiskai."""
     if not os.path.exists(SEEN_FILE):
         return {}
@@ -147,8 +141,8 @@ def load_seen():
     except Exception as e:
         print(f"! {SEEN_FILE} sugadintas ({e}), pradedama nuo tuscio.")
         return {}
- 
- 
+
+
 def prune_seen(seen):
     """Istrina: (a) idesenes nei SEEN_MAX_AGE_DAYS; (b) pertekliu virs SEEN_MAX_ENTRIES."""
     now = time.time()
@@ -158,14 +152,14 @@ def prune_seen(seen):
         by_time = sorted(pruned.items(), key=lambda kv: kv[1], reverse=True)
         pruned = dict(by_time[:SEEN_MAX_ENTRIES])
     return pruned
- 
- 
+
+
 def save_seen(seen):
     seen = prune_seen(seen)
     with open(SEEN_FILE, "w", encoding="utf-8") as f:
         json.dump(seen, f)
- 
- 
+
+
 def fetch_page_with_retry(query, page, max_retries=3):
     """Uzklausia viena puslapi su pakartojimais:
     - 401/403 -> atnaujina sesija ir bando dar karta (sesija galejo pasenti)
@@ -208,8 +202,8 @@ def fetch_page_with_retry(query, page, max_retries=3):
             time.sleep(SLEEP_SECONDS * attempt)
     print(f"  ! Visi {max_retries} bandymai nepavyko: '{query}' p.{page}")
     return None
- 
- 
+
+
 def fetch_items(query, pages):
     items = []
     for page in range(1, pages + 1):
@@ -221,16 +215,16 @@ def fetch_items(query, pages):
         items.extend(batch)
         time.sleep(SLEEP_SECONDS)
     return items
- 
- 
+
+
 _debug_og_printed = False
 DETAIL_SLEEP_SECONDS = 1.0
- 
+
 _META_TAG_RE = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
 _PROPERTY_RE = re.compile(r'property=["\']([^"\']+)["\']', re.IGNORECASE)
 _CONTENT_RE = re.compile(r'content=["\']([^"\']*)["\']', re.IGNORECASE)
- 
- 
+
+
 def _parse_og_tags(html_text):
     """Israsko visas 'og:*' meta zymas is HTML teksto, nepriklausomai nuo
     property/content atributu tvarkos tage."""
@@ -245,18 +239,18 @@ def _parse_og_tags(html_text):
         key = pm.group(1)[3:]  # nuimam "og:" prefiksa
         og[key] = html.unescape(cm.group(1))
     return og
- 
- 
+
+
 def fetch_item_page_og(item_id, url_path, max_bytes=200_000):
     """Katalogo/paieskos API skelbimo objekte NERA aprasymo, o atskiras JSON
     endpoint'as (/api/v2/items/{id}) Vinted DAZNIAUSIAI BLOKUOJA (403, anti-bot
     apsauga - tai patvirtinta ir populiariuose atviro kodo Vinted scraper'iuose).
- 
+
     Todel aprasyma skaitome is vieso skelbimo puslapio OpenGraph <meta> zymu
     (title/description/image/url), kurios visada yra HTML <head> dalyje - siam
-    keliui pakanka atsiusti tik pirmus kelis desimtus KB puslapio, o ne visa
+    keliui pakanka atsiusti tik pirmus kelis desimtis KB puslapio, o ne visa
     JSON API atsakyma, tad jis maziau panasus i "bot" elgesi.
- 
+
     DEMESIO: jei og:description formatas skiriasi nuo tiketo (pvz. Vinted
     kartais dubliuoja kaina ar kt. teksta prieky), DEBUG isvestis parodys
     tiksliai, ka gavome - pagal tai galesim koreguoti."""
@@ -290,8 +284,8 @@ def fetch_item_page_og(item_id, url_path, max_bytes=200_000):
         if DEBUG:
             print(f"  [DEBUG] nepavyko gauti skelbimo {item_id} puslapio: {e}")
         return {}
- 
- 
+
+
 def _to_float(v):
     """Saugiai vercia reiksme i float; None jei nepavyksta."""
     if v is None:
@@ -300,8 +294,8 @@ def _to_float(v):
         return float(str(v).replace(",", ".").strip())
     except (ValueError, TypeError):
         return None
- 
- 
+
+
 def get_price(item):
     """Lankstus kainos nuskaitymas – bando kelis formatus ir laukus,
     kad kintant API strukturai kuo ilgiau veiktu be taisymu:
@@ -338,13 +332,13 @@ def get_price(item):
             if f is not None:
                 return f
     return None
- 
- 
+
+
 def get_country_code(item):
     """Grazina pardavejo salies koda is profilio URL domeno.
     Pvz. https://www.vinted.pl/member/... -> "PL",  vinted.fr -> "FR",
     vinted.co.uk -> "UK". Jei nepavyksta - None.
- 
+
     DEMESIO: si euristika gali neveikti, jei API visada grazina profile_url
     su tuo paciu domenu, per kuri siunciama uzklausa (t.y. visada vinted.lt),
     nepriklausomai nuo tikros pardavejo salies. Jei DEBUG=True, pirmam
@@ -365,8 +359,8 @@ def get_country_code(item):
     if domain == "co.uk":
         return "UK"
     return domain.upper()
- 
- 
+
+
 # Vinted "status_id" reiksmes stabilios visose salyse (patvirtinta per keliu
 # nepriklausomu Vinted API dokumentacijos saltiniu).
 STATUS_LABELS_LT = {
@@ -377,13 +371,13 @@ STATUS_LABELS_LT = {
     4: "Patenkinama",
     7: "Neveikianti",
 }
- 
+
 _debug_status_printed = False
- 
- 
+
+
 def get_condition(item):
     """Grazina (raktas, lietuviskas_pavadinimas) bukles grupavimui/rodymui.
- 
+
     Katalogo API skelbimo objekte bukle gali ateiti kaip:
     - 'status_id' (skaitinis, stabilus visose rinkose - pageidautina)
     - 'status'    (jau tekstinis pavadinimas, lokalizuotas pagal Accept-Language)
@@ -396,28 +390,28 @@ def get_condition(item):
     if DEBUG and not _debug_status_printed:
         print(f"  [DEBUG] bukle: status={status_text!r}, status_id={status_id!r}")
         _debug_status_printed = True
- 
+
     label = STATUS_LABELS_LT.get(status_id) if isinstance(status_id, int) else None
     if not label:
         label = status_text if isinstance(status_text, str) and status_text else "nežinoma"
- 
+
     key = status_id if isinstance(status_id, int) else label
     return key, label
- 
- 
+
+
 # --- Kalbos aptikimas -------------------------------------------------
 # Tikslas: praleisti tik lietuviskus (arba kalbos pozymiu neturincius)
 # skelbimus, atmesti aiskiai uzsienietiskus.
- 
+
 import re as _re
- 
- 
+
+
 def _word_regex(words):
     """Sudaro viena regex su \\b riboms is zodziu/fraziu sarasa (case jau lower)."""
     parts = sorted((_re.escape(w) for w in words), key=len, reverse=True)
     return _re.compile(r"\b(?:" + "|".join(parts) + r")\b")
- 
- 
+
+
 # Raidziu, kuriu nera lietuviu kalboje (beveik visada = lenkiska kalba)
 POLISH_ONLY_CHARS = set("łńśźżć")
 POLISH_WORDS = [
@@ -429,10 +423,10 @@ POLISH_WORDS = [
     "bateria", "akumulator", "dziala", "pilne", "negocjacje", "akcesoria",
 ]
 _POLISH_RE = _word_regex(POLISH_WORDS)
- 
+
 # Raidziu, kuriu nera lietuviu kalboje, bet yra latviu
 LATVIAN_ONLY_CHARS = set("āēīōūļņģ")
- 
+
 # Vokiskos raides ir dazni zodziai
 GERMAN_ONLY_CHARS = set("äöüß")
 GERMAN_WORDS = [
@@ -440,14 +434,14 @@ GERMAN_WORDS = [
     "originalverpackung", "rechnung", "funktioniert", "einwandfrei",
 ]
 _GERMAN_RE = _word_regex(GERMAN_WORDS)
- 
+
 # Dazni angliski zodziai/frazes skelbimuose
 ENGLISH_WORDS = [
     "selling", "brand new", "like new", "shipping", "great condition",
     "excellent condition", "as new", "no issues", "works perfectly",
 ]
 _ENGLISH_RE = _word_regex(ENGLISH_WORDS)
- 
+
 # Lietuviski pozymiai – jei jie yra, skelbimas laikomas lietuvisku
 # (net jei atsitiktinai atsirado viena "uzsienietiska" raide).
 LITHUANIAN_WORDS = [
@@ -458,48 +452,48 @@ LITHUANIAN_WORDS = [
     "be defektu", "be jokiu defektu", "kokybiskas", "mazai naudotas",
 ]
 _LITHUANIAN_RE = _word_regex(LITHUANIAN_WORDS)
- 
- 
+
+
 def _has_cyrillic(text):
     return any("\u0400" <= ch <= "\u04ff" for ch in text)
- 
- 
+
+
 def detect_foreign_language(*texts):
     """Grazina 'PL' / 'LV' / 'DE' / 'RU' / 'EN' jei tekstas atrodo parasytas ne
     lietuviskai, arba None jei atrodo lietuviskas arba kalbos nustatyti
     negalima (per mazai teksto / vien modelio pavadinimas).
- 
+
     Sie zodziu sarasai sudaryti is zodziu, kuriu praktiskai nepasitaiko
     lietuviu kalboje, tad UZTENKA VIENO atitikimo (naudojant \\b zodzio
     ribas, kad neuzkabintu dalies kito zodzio)."""
     t = " ".join(x for x in texts if x).lower()
     if not t:
         return None
- 
+
     # Jei yra aiskiu lietuvisku pozymiu – laikome lietuvisku (nepriklausomai
     # nuo atsitiktiniu raidziu). Tai apsaugo nuo klaidingu atmetimu, kai
     # aprasyme nera "tikru" lietuvisku raidziu, pvz. parasyta svelnai.
     if _LITHUANIAN_RE.search(t):
         return None
- 
+
     if _has_cyrillic(t):
         return "RU"
- 
+
     if (sum(1 for ch in t if ch in POLISH_ONLY_CHARS) >= 1) or _POLISH_RE.search(t):
         return "PL"
- 
+
     if (sum(1 for ch in t if ch in GERMAN_ONLY_CHARS) >= 1) or _GERMAN_RE.search(t):
         return "DE"
- 
+
     if sum(1 for ch in t if ch in LATVIAN_ONLY_CHARS) >= 1:
         return "LV"
- 
+
     if _ENGLISH_RE.search(t):
         return "EN"
- 
+
     return None
- 
- 
+
+
 def stars_line(reputation, feedback_count):
     """Verčia feedback_reputation (0..1) i žvaigždutes, pvz. '★★★☆☆ (3.1/5, 33 atsiliep.)'."""
     if reputation is None:
@@ -510,8 +504,8 @@ def stars_line(reputation, feedback_count):
     if feedback_count is not None:
         line += f", {feedback_count} atsiliep."
     return line + ")"
- 
- 
+
+
 def get_seller_info(user_info):
     """Grazina (reputation 0..1 arba None, feedback_count arba None) is
     PILNO pardavejo profilio atsakymo (fetch_user_info rezultato) - kataloginiame
@@ -525,11 +519,11 @@ def get_seller_info(user_info):
     except (TypeError, ValueError):
         cnt = None
     return rep, cnt
- 
- 
+
+
 _debug_userinfo_printed = False
- 
- 
+
+
 def fetch_user_info(user_id):
     """Pilnas pardavejo profilis - /api/v2/users/{id}. Katalogo skelbimuose
     ideklota 'user' objekte (id/login/profile_url/photo/business) NERA
@@ -561,8 +555,8 @@ def fetch_user_info(user_id):
         if DEBUG:
             print(f"  [DEBUG] nepavyko gauti pardavejo {user_id} info: {e}")
         return {}
- 
- 
+
+
 def market_median(prices):
     """Apkarpyta mediana – nukertame 10% pigiausių ir 10% brangiausių,
     kad vienetiniai 'sukčių' ar šlamšto įkainiai nepaveiktų įverčio."""
@@ -575,13 +569,13 @@ def market_median(prices):
     if len(trimmed) % 2:
         return trimmed[mid]
     return (trimmed[mid - 1] + trimmed[mid]) / 2.0
- 
- 
+
+
 def is_junk(title):
     t = title.lower()
     return any(w in t for w in BLACKLIST_WORDS)
- 
- 
+
+
 def send_telegram(text):
     url = "https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML",
@@ -592,8 +586,8 @@ def send_telegram(text):
             print(f"  ! Telegram klaida: {r.text[:150]}")
     except Exception as e:
         print(f"  ! Nepavyko issiusti Telegram: {e}")
- 
- 
+
+
 def send_telegram_photo(photo_url, caption):
     """Siunčia nuotrauką su aprašu (kaip pavyzdyje). Jei nepavyksta – tik tekstą."""
     if not photo_url:
@@ -610,15 +604,15 @@ def send_telegram_photo(photo_url, caption):
     except Exception as e:
         print(f"  ! Nepavyko issiusti nuotraukos: {e}")
         send_telegram(caption)
- 
- 
+
+
 def main():
     if not BOT_TOKEN or not CHAT_ID:
         print("Nenurodyti BOT_TOKEN / CHAT_ID (GitHub Secrets)!")
         return
- 
+
     init_session()
- 
+
     seen = load_seen()
     new_seen = dict(seen) # <-- IŠTAISYTA ČIA
     alerts = []
@@ -630,7 +624,7 @@ def main():
         items = fetch_items(q, PAGES)
         total_fetched += len(items)
         fresh = 0
- 
+
         # Rinkos verte: MEDIANA ATSKIRAI KIEKVIENAI BUKLEI (kad "Gera" nebutu
         # lyginama su "Nauja su etiketemis" kaina - tai iskraipytu pelno iverti).
         prices_by_condition = {}
@@ -645,7 +639,7 @@ def main():
         excluded_foreign = 0
         excluded_price_digit = 0
         excluded_condition = 0
- 
+
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -656,36 +650,25 @@ def main():
             if item_id in seen:
                 continue
             new_seen[item_id] = time.time()
- 
+
             price = get_price(item)
             if price is None or not (model["min_price"] <= price <= model["max_price"]):
                 continue
- 
+
             if PRICE_LAST_DIGITS and int(price) % 10 not in PRICE_LAST_DIGITS:
                 excluded_price_digit += 1
                 continue
- 
+
             # Bukle jau yra kataloginiame atsakyme - papildomos uzklausos nereikia.
             cond_key, cond_label = get_condition(item)
             if ALLOWED_CONDITIONS and cond_key not in ALLOWED_CONDITIONS and cond_label not in ALLOWED_CONDITIONS:
                 excluded_condition += 1
                 continue
- 
+
             title = item.get("title") or item.get("name") or "?"
             url_path = item.get("url") or item.get("path") or item.get("web_url") or ""
             full_url = BASE + url_path if url_path.startswith("/") else url_path
- 
-            # Pirminis (nemokamas, be tinklo) salies patikrinimas - filtruojame
-            # anksti, kad nereiketu tinklo uzklausu skelbimams, kurie bet kokiu
-            # atveju bus atmesti.
-            country = get_country_code(item)
-            country_ok = (country in ALLOWED_COUNTRY_CODES) if country else (not REQUIRE_KNOWN_COUNTRY)
-            if not country_ok:
-                excluded_by_country += 1
-                if DEBUG:
-                    print(f"  [DEBUG] atmesta (salis={country}): {title[:60]}")
-                continue
- 
+
             # Katalogo API nera aprasymo, o JSON detaliu endpoint'as Vinted
             # dazniausiai blokuoja (403). Todel aprasyma skaitome is vieso
             # skelbimo puslapio OpenGraph zymu.
@@ -694,7 +677,26 @@ def main():
             if og.get("title"):
                 title = og["title"]
             description = og.get("description") or ""
- 
+
+            # Pilnas pardavejo profilis - jame (skirtingai nei kataloginiame
+            # 'user' objekte) YRA reputacija, atsiliepimu skaicius IR salies
+            # kodas. Jei sis endpoint'as uzblokuojamas ar negrazina salies,
+            # grieztame prie senos profile_url euristikos (atrodo, visada LT).
+            catalog_user = item.get("user") or {}
+            user_id = catalog_user.get("id")
+            user_info = fetch_user_info(user_id)
+            time.sleep(DETAIL_SLEEP_SECONDS)
+
+            country = (user_info.get("country_code") or "").upper() or None
+            if not country:
+                country = get_country_code(item)
+            country_ok = (country in ALLOWED_COUNTRY_CODES) if country else (not REQUIRE_KNOWN_COUNTRY)
+            if not country_ok:
+                excluded_by_country += 1
+                if DEBUG:
+                    print(f"  [DEBUG] atmesta (salis={country}): {title[:60]}")
+                continue
+
             if ONLY_LITHUANIAN_TEXT:
                 lang = detect_foreign_language(title, description)
                 if lang:
@@ -702,27 +704,10 @@ def main():
                     if DEBUG:
                         print(f"  [DEBUG] atmesta (kalba={lang}, salis={country}): {title[:60]}")
                     continue
- 
+
             if is_junk(title):
                 continue
- 
-            # Pardavejo profilis (reputacija + patikimesnis salies kodas) -
-            # siciama TIK dabar, skelbimams, kurie jau praejo visus kitus
-            # filtrus. Tai naujausias, PAPILDOMAS endpoint'as - jei jis kelia
-            # problemu (blokavimas/rate limit), issijunk per FETCH_SELLER_INFO=false.
-            user_info = {}
-            if FETCH_SELLER_INFO:
-                catalog_user = item.get("user") or {}
-                user_id = catalog_user.get("id")
-                user_info = fetch_user_info(user_id)
-                time.sleep(DETAIL_SLEEP_SECONDS)
-                real_country = (user_info.get("country_code") or "").upper() or None
-                if real_country and real_country not in ALLOWED_COUNTRY_CODES:
-                    excluded_by_country += 1
-                    if DEBUG:
-                        print(f"  [DEBUG] atmesta (tikslesne salis={real_country}): {title[:60]}")
-                    continue
- 
+
             rep, cnt = get_seller_info(user_info)
             photo = og.get("image") or ""
             if photo.startswith("/"):
@@ -737,36 +722,36 @@ def main():
             fresh += 1
             if DEBUG:
                 print(f"  [DEBUG] PRIIMTA (salis={country}, bukle={cond_label}): {title[:60]}")
- 
+
         print(f"  Gauta: {len(items)}, tinkama: {fresh}, atmesta salis: {excluded_by_country}, atmesta uzsienio kalba: {excluded_foreign}, atmesta kainos skaitmuo: {excluded_price_digit}, atmesta bukle: {excluded_condition}")
         time.sleep(SLEEP_SECONDS)
- 
+
     # Rusiuojame visus alertus pagal kaina (nuo maziausios)
     alerts.sort(key=lambda a: a["price"])
- 
+
     save_seen(new_seen)
- 
+
     # Savaime diagnostika: jei is VISU paiesku negauta nei vieno skelbimo,
     # tai zenklas, kad Vinted galejo ka nors pakeisti – pranesame i Telegram.
     if total_fetched == 0 and not DRY_RUN and BOT_TOKEN and CHAT_ID:
         send_telegram("<b>ISPEJIMAS</b>: negauta nei vieno skelbimo is Vinted. "
                       "Galimai pasikeite API – patikrink skripto logus.")
- 
+
     if not alerts:
         print("Nauju deal'u nera.")
         return
- 
+
     if DRY_RUN:
         print(f"[DRY_RUN] Rasta {len(alerts)} dealu, bet zinuciu NESIUNCIAMA.")
         print("[DRY_RUN] Pakeisk DRY_RUN = False ir paleisk dar karta.")
         return
- 
+
     for a in alerts:
         title_esc = html.escape(a["title"][:80])
         # Aprašymo ištrauka (pirmi ~140 simbolių)
         desc = " ".join((a["desc"] or "").split())[:140]
         desc_esc = html.escape(desc) + ("…" if len((a["desc"] or "")) > 140 else "")
- 
+
         lines = [
             "<b>" + html.escape(a["query"]) + "</b> | <b>" + f'{a["price"]:.0f} €' + "</b>",
         ]
@@ -781,14 +766,14 @@ def main():
             lines.append("<b>💰 Planuojamas pelnas:</b> ~" + f'{profit:+.0f} €')
         lines.append("")
         lines.append('<a href="' + a["url"] + '">Atidaryti skelbimą</a>')
- 
+
         msg = "\n".join(lines)
         send_telegram_photo(a["photo"], msg)
         print(f'  -> {a["query"]} {a["price"]:.0f} EUR: {a["title"][:50]}')
- 
+
     print(f"Issiusta {len(alerts)} alert'u.")
- 
- 
+
+
 def run_with_guard():
     """Visa programa apsupta apsauga: bet kokia netiketa klaida – pranesimas
     i Telegram, kad Vinted pakeitus kazka nezaltum be zinios."""
@@ -802,7 +787,7 @@ def run_with_guard():
             send_telegram("<b>SKRIPTAS UZLUZO</b>\n" + str(e)[:400])
         except Exception:
             pass
- 
- 
+
+
 if __name__ == "__main__":
     run_with_guard()
