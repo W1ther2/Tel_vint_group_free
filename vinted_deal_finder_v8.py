@@ -58,10 +58,15 @@ DEFAULTS = {
     # intervalu tarp situ dvieju reiksmiu (minutemis).
     "CHECK_INTERVAL_MIN_MINUTES": 15,
     "CHECK_INTERVAL_MAX_MINUTES": 17,
+    # Rinkos kainos istorija: kiek dienu laikyti taskus ir kiek daugiausiai
+    # saugoti vienai (modelis, bukle) porai.
+    "PRICE_HISTORY_MAX_AGE_DAYS": 30,
+    "PRICE_HISTORY_MAX_PER_KEY": 1000,
 }
 
 CONFIG_FILE = "config.json"
 SEEN_FILE = "seen.json"
+PRICE_HISTORY_FILE = "price_history.json"
 
 
 def load_config():
@@ -97,6 +102,8 @@ SLEEP_SECONDS = int(_CFG["SLEEP_SECONDS"])
 DRY_RUN = bool(_CFG["DRY_RUN"])
 DEBUG = bool(_CFG["DEBUG"])
 SEEN_MAX_AGE_DAYS = int(_CFG["SEEN_MAX_AGE_DAYS"])
+PRICE_HISTORY_MAX_AGE_DAYS = int(_CFG["PRICE_HISTORY_MAX_AGE_DAYS"])
+PRICE_HISTORY_MAX_PER_KEY = int(_CFG["PRICE_HISTORY_MAX_PER_KEY"])
 SEEN_MAX_ENTRIES = int(_CFG["SEEN_MAX_ENTRIES"])
 CHECK_INTERVAL_MIN_MINUTES = float(_CFG["CHECK_INTERVAL_MIN_MINUTES"])
 CHECK_INTERVAL_MAX_MINUTES = float(_CFG["CHECK_INTERVAL_MAX_MINUTES"])
@@ -605,6 +612,46 @@ def fetch_user_info(user_id):
         return {}
 
 
+def load_price_history():
+    """Grazina {raktas: [(kaina, laiko_zyme), ...]} - kaupiama per VISUS
+    paleidimus (ne tik siandienos), kad rinkos mediana remtusi realiu dideliu
+    imties dydziu, o ne vieno paleidimo ~200-300 skelbimu."""
+    if not os.path.exists(PRICE_HISTORY_FILE):
+        return {}
+    try:
+        with open(PRICE_HISTORY_FILE, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        return {k: [(float(p), float(t)) for p, t in v] for k, v in raw.items()}
+    except (json.JSONDecodeError, ValueError, TypeError, OSError):
+        print(f"! {PRICE_HISTORY_FILE} sugadintas, pradedama nuo tuscios istorijos.")
+        return {}
+
+
+def save_price_history(history):
+    """Apkarpo pasenusius taskus (> PRICE_HISTORY_MAX_AGE_DAYS) ir perteklu
+    virs PRICE_HISTORY_MAX_PER_KEY, tada issaugo."""
+    now = time.time()
+    limit = PRICE_HISTORY_MAX_AGE_DAYS * 86400
+    pruned = {}
+    for key, points in history.items():
+        fresh_points = [(p, t) for p, t in points if now - t <= limit]
+        if len(fresh_points) > PRICE_HISTORY_MAX_PER_KEY:
+            fresh_points.sort(key=lambda pt: pt[1], reverse=True)
+            fresh_points = fresh_points[:PRICE_HISTORY_MAX_PER_KEY]
+        if fresh_points:
+            pruned[key] = fresh_points
+    with open(PRICE_HISTORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(pruned, f)
+    return pruned
+
+
+def record_prices(history, key, prices):
+    """Prideda siandien pastebetas kainas prie sukauptos istorijos (in-place)."""
+    now = time.time()
+    history.setdefault(key, [])
+    history[key].extend((p, now) for p in prices)
+
+
 def market_median(prices):
     """Apkarpyta mediana – nukertame 10% pigiausių ir 10% brangiausių,
     kad vienetiniai 'sukčių' ar šlamšto įkainiai nepaveiktų įverčio."""
@@ -667,7 +714,7 @@ def format_alert_message(a):
     lines.append("<b>📦 Būklė:</b> " + html.escape(a["condition"]))
     lines.append("<b>⭐ Pardavėjas:</b> " + stars_line(a["rep"], a["cnt"]))
     if a["market"]:
-        lines.append("<b>📊 Rinkos vertė (tos pačios būklės):</b> ~" + f'{a["market"]:.0f} €')
+        lines.append("<b>📊 Rinkos vertė (istorinė, ta pati būklė):</b> ~" + f'{a["market"]:.0f} €')
     lines.append("")
     lines.append('<a href="' + a["url"] + '">Atidaryti skelbimą</a>')
     return "\n".join(lines)
@@ -685,6 +732,7 @@ def main():
 
     seen = load_seen()
     new_seen = dict(seen) # <-- IŠTAISYTA ČIA
+    price_history = load_price_history()
     total_fetched = 0
     total_alerts = 0
     
@@ -695,8 +743,10 @@ def main():
         total_fetched += len(items)
         fresh = 0
 
-        # Rinkos verte: MEDIANA ATSKIRAI KIEKVIENAI BUKLEI (kad "Gera" nebutu
-        # lyginama su "Nauja su etiketemis" kaina - tai iskraipytu pelno iverti).
+        # Rinkos verte: MEDIANA ATSKIRAI KIEKVIENAI BUKLEI, skaiciuojama is
+        # SUKAUPTOS ISTORIJOS (visu ankstesniu paleidimu per PRICE_HISTORY_MAX_AGE_DAYS
+        # dienu), o ne tik siandienos ~200-300 skelbimu - imtis daug didesne
+        # ir stabilesne, o vis tiek tik LT rinkoje (be papildomo apkrovimo).
         prices_by_condition = {}
         for it in items:
             if isinstance(it, dict):
@@ -704,7 +754,12 @@ def main():
                 if ap and ap > 0:
                     ckey, _ = get_condition(it)
                     prices_by_condition.setdefault(ckey, []).append(ap)
-        market_by_condition = {k: market_median(v) for k, v in prices_by_condition.items()}
+        for ckey, prices in prices_by_condition.items():
+            record_prices(price_history, f"{q}|{ckey}", prices)
+        market_by_condition = {
+            ckey: market_median([p for p, _ in price_history.get(f"{q}|{ckey}", [])])
+            for ckey in prices_by_condition
+        }
         excluded_by_country = 0
         excluded_foreign = 0
         excluded_price_digit = 0
@@ -817,6 +872,7 @@ def main():
                 print(f'  -> {q} {price:.0f} EUR: {title[:50]}')
 
         print(f"  Gauta: {len(items)}, tinkama: {fresh}, atmesta salis: {excluded_by_country}, atmesta uzsienio kalba: {excluded_foreign}, atmesta kainos skaitmuo: {excluded_price_digit}, atmesta bukle: {excluded_condition}")
+        price_history = save_price_history(price_history)
         time.sleep(SLEEP_SECONDS)
 
     save_seen(new_seen)
