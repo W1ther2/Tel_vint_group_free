@@ -612,6 +612,27 @@ def send_telegram_photo(photo_url, caption):
         send_telegram(caption)
 
 
+def format_alert_message(a):
+    desc = " ".join((a["desc"] or "").split())[:140]
+    desc_esc = html.escape(desc) + ("…" if len((a["desc"] or "")) > 140 else "")
+
+    lines = [
+        "<b>" + html.escape(a["query"]) + "</b> | <b>" + f'{a["price"]:.0f} €' + "</b>",
+    ]
+    if desc_esc:
+        lines.append(desc_esc)
+    lines.append("")
+    lines.append("<b>📦 Būklė:</b> " + html.escape(a["condition"]))
+    lines.append("<b>⭐ Pardavėjas:</b> " + stars_line(a["rep"], a["cnt"]))
+    if a["market"]:
+        profit = a["market"] - a["price"]
+        lines.append("<b>📊 Rinkos vertė (tos pačios būklės):</b> ~" + f'{a["market"]:.0f} €')
+        lines.append("<b>💰 Planuojamas pelnas:</b> ~" + f'{profit:+.0f} €')
+    lines.append("")
+    lines.append('<a href="' + a["url"] + '">Atidaryti skelbimą</a>')
+    return "\n".join(lines)
+
+
 def main():
     if not BOT_TOKEN or not CHAT_ID:
         print("Nenurodyti BOT_TOKEN / CHAT_ID (GitHub Secrets)!")
@@ -621,8 +642,8 @@ def main():
 
     seen = load_seen()
     new_seen = dict(seen) # <-- IŠTAISYTA ČIA
-    alerts = []
     total_fetched = 0
+    total_alerts = 0
     
     for model in MODELS:
         q = model["query"]
@@ -730,22 +751,29 @@ def main():
             photo = og.get("image") or ""
             if photo.startswith("/"):
                 photo = BASE + photo
-            alerts.append({
+            a = {
                 "query": q, "title": title, "price": price,
                 "url": full_url, "desc": description,
                 "rep": rep, "cnt": cnt,
                 "market": market_by_condition.get(cond_key), "photo": photo,
                 "condition": cond_label,
-            })
+            }
             fresh += 1
+            total_alerts += 1
             if DEBUG:
                 print(f"  [DEBUG] PRIIMTA (salis={country}, bukle={cond_label}): {title[:60]}")
 
+            # Siunciame IS KARTO, kai tik skelbimas praeina visus filtrus -
+            # nebelaukiame, kol patikrinsim visus modelius, ir nebeberikiuojame
+            # pagal kaina (zinutes ateis ta tvarka, kokia skelbimai rasti).
+            if DRY_RUN:
+                print(f"  [DRY_RUN] Rastas deal'as (NESIUNCIAMA): {q} {price:.0f} EUR: {title[:50]}")
+            else:
+                send_telegram_photo(photo, format_alert_message(a))
+                print(f'  -> {q} {price:.0f} EUR: {title[:50]}')
+
         print(f"  Gauta: {len(items)}, tinkama: {fresh}, atmesta salis: {excluded_by_country}, atmesta uzsienio kalba: {excluded_foreign}, atmesta kainos skaitmuo: {excluded_price_digit}, atmesta bukle: {excluded_condition}")
         time.sleep(SLEEP_SECONDS)
-
-    # Rusiuojame visus alertus pagal kaina (nuo maziausios)
-    alerts.sort(key=lambda a: a["price"])
 
     save_seen(new_seen)
 
@@ -755,41 +783,15 @@ def main():
         send_telegram("<b>ISPEJIMAS</b>: negauta nei vieno skelbimo is Vinted. "
                       "Galimai pasikeite API – patikrink skripto logus.")
 
-    if not alerts:
+    if total_alerts == 0:
         print("Nauju deal'u nera.")
         return
 
     if DRY_RUN:
-        print(f"[DRY_RUN] Rasta {len(alerts)} dealu, bet zinuciu NESIUNCIAMA.")
+        print(f"[DRY_RUN] Iso rasta {total_alerts} dealu, bet zinuciu NESIUNCIAMA.")
         print("[DRY_RUN] Pakeisk DRY_RUN = False ir paleisk dar karta.")
-        return
-
-    for a in alerts:
-        title_esc = html.escape(a["title"][:80])
-        # Aprašymo ištrauka (pirmi ~140 simbolių)
-        desc = " ".join((a["desc"] or "").split())[:140]
-        desc_esc = html.escape(desc) + ("…" if len((a["desc"] or "")) > 140 else "")
-
-        lines = [
-            "<b>" + html.escape(a["query"]) + "</b> | <b>" + f'{a["price"]:.0f} €' + "</b>",
-        ]
-        if desc_esc:
-            lines.append(desc_esc)
-        lines.append("")
-        lines.append("<b>📦 Būklė:</b> " + html.escape(a["condition"]))
-        lines.append("<b>⭐ Pardavėjas:</b> " + stars_line(a["rep"], a["cnt"]))
-        if a["market"]:
-            profit = a["market"] - a["price"]
-            lines.append("<b>📊 Rinkos vertė (tos pačios būklės):</b> ~" + f'{a["market"]:.0f} €')
-            lines.append("<b>💰 Planuojamas pelnas:</b> ~" + f'{profit:+.0f} €')
-        lines.append("")
-        lines.append('<a href="' + a["url"] + '">Atidaryti skelbimą</a>')
-
-        msg = "\n".join(lines)
-        send_telegram_photo(a["photo"], msg)
-        print(f'  -> {a["query"]} {a["price"]:.0f} EUR: {a["title"][:50]}')
-
-    print(f"Issiusta {len(alerts)} alert'u.")
+    else:
+        print(f"Issiusta {total_alerts} alert'u.")
 
 
 def run_with_guard():
