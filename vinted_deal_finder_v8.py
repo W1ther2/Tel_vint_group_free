@@ -9,6 +9,7 @@ import os
 import time
 import re
 import html
+import random
 
 # ========== SUSIKONFIGUROK SITAS EILUTES ==========
 # BOT_TOKEN ir CHAT_ID imami is aplinkos kintamuju (GitHub Secrets).
@@ -53,6 +54,10 @@ DEFAULTS = {
     "DEBUG": False,
     "SEEN_MAX_AGE_DAYS": 7,
     "SEEN_MAX_ENTRIES": 10000,
+    # Realus patikrinimas ivyks ne tiksliai kas N minuciu, o atsitiktiniu
+    # intervalu tarp situ dvieju reiksmiu (minutemis).
+    "CHECK_INTERVAL_MIN_MINUTES": 15,
+    "CHECK_INTERVAL_MAX_MINUTES": 17,
 }
 
 CONFIG_FILE = "config.json"
@@ -93,6 +98,8 @@ DRY_RUN = bool(_CFG["DRY_RUN"])
 DEBUG = bool(_CFG["DEBUG"])
 SEEN_MAX_AGE_DAYS = int(_CFG["SEEN_MAX_AGE_DAYS"])
 SEEN_MAX_ENTRIES = int(_CFG["SEEN_MAX_ENTRIES"])
+CHECK_INTERVAL_MIN_MINUTES = float(_CFG["CHECK_INTERVAL_MIN_MINUTES"])
+CHECK_INTERVAL_MAX_MINUTES = float(_CFG["CHECK_INTERVAL_MAX_MINUTES"])
 # ===================================================
 
 BASE = "https://www.vinted.lt"
@@ -164,6 +171,41 @@ def save_seen(seen):
     seen = prune_seen(seen)
     with open(SEEN_FILE, "w", encoding="utf-8") as f:
         json.dump(seen, f)
+
+
+LAST_RUN_FILE = "last_run.json"
+
+
+def should_run_now():
+    """Vietoj to, kad tikrintume skelbimus TIKSLIAI kas N minuciu, laukiam
+    ATSITIKTINIO intervalo is [CHECK_INTERVAL_MIN_MINUTES, CHECK_INTERVAL_MAX_MINUTES].
+    Jei nuo paskutinio TIKRO patikrinimo dar nepraejo tiek laiko - grazina False
+    ir main() is karto baigia darba (jokiu API uzklausu, jokio Telegram).
+
+    SVARBU: kad tai realiai duotu 15-17 min efektyvu intervala, GitHub Actions
+    workflow .yml faile cron TURI vykti DAZNIAU nei 15 min (pvz. '*/5 * * * *')
+    - sitas kodas tik SPRENDZIA, ar praleisti konkretu iskvietima, jis pats
+    savęs periodiskai neiskviecia. .yml failo neturiu, tad ji reikia
+    pakoreguoti atskirai repo nustatymuose."""
+    now = time.time()
+    try:
+        with open(LAST_RUN_FILE, "r", encoding="utf-8") as f:
+            last_run = float(json.load(f).get("last_run", 0))
+    except (FileNotFoundError, json.JSONDecodeError, ValueError, TypeError, OSError):
+        last_run = 0
+
+    target_gap = random.uniform(CHECK_INTERVAL_MIN_MINUTES * 60, CHECK_INTERVAL_MAX_MINUTES * 60)
+    elapsed = now - last_run
+    if elapsed < target_gap:
+        print(f"Dar ne laikas tikrinti (praejo {elapsed/60:.1f} min., reikia ~{target_gap/60:.1f} min.) - praleidziama.")
+        return False
+
+    try:
+        with open(LAST_RUN_FILE, "w", encoding="utf-8") as f:
+            json.dump({"last_run": now}, f)
+    except Exception as e:
+        print(f"! Nepavyko issaugoti {LAST_RUN_FILE}: {e}")
+    return True
 
 
 def fetch_page_with_retry(query, page, max_retries=3):
@@ -625,15 +667,16 @@ def format_alert_message(a):
     lines.append("<b>📦 Būklė:</b> " + html.escape(a["condition"]))
     lines.append("<b>⭐ Pardavėjas:</b> " + stars_line(a["rep"], a["cnt"]))
     if a["market"]:
-        profit = a["market"] - a["price"]
         lines.append("<b>📊 Rinkos vertė (tos pačios būklės):</b> ~" + f'{a["market"]:.0f} €')
-        lines.append("<b>💰 Planuojamas pelnas:</b> ~" + f'{profit:+.0f} €')
     lines.append("")
     lines.append('<a href="' + a["url"] + '">Atidaryti skelbimą</a>')
     return "\n".join(lines)
 
 
 def main():
+    if not should_run_now():
+        return
+
     if not BOT_TOKEN or not CHAT_ID:
         print("Nenurodyti BOT_TOKEN / CHAT_ID (GitHub Secrets)!")
         return
@@ -677,6 +720,7 @@ def main():
             if item_id in seen:
                 continue
             new_seen[item_id] = time.time()
+            save_seen(new_seen)
 
             price = get_price(item)
             if price is None or not (model["min_price"] <= price <= model["max_price"]):
