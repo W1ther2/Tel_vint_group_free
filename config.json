@@ -1,6 +1,21 @@
 {
   "MODELS": [
     {
+      "query": "iPhone 12",
+      "min_price": 50,
+      "max_price": 130
+    },
+    {
+      "query": "iPhone 12 Pro",
+      "min_price": 50,
+      "max_price": 150
+    },
+    {
+      "query": "iPhone 13 mini",
+      "min_price": 50,
+      "max_price": 180
+    },
+    {
       "query": "iPhone 13",
       "min_price": 50,
       "max_price": 180
@@ -19,7 +34,17 @@
       "query": "iPhone 14 Pro",
       "min_price": 50,
       "max_price": 350
-    }
+    },
+    {
+      "query": "iPhone 15",
+      "min_price": 50,
+      "max_price": 350
+    },
+     {
+      "query": "iPhone 15 pro",
+      "min_price": 50,
+      "max_price": 450
+    },
   ],
   "ALLOWED_COUNTRY_CODES": [
     "LT"
