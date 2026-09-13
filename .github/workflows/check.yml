@@ -2,7 +2,7 @@ name: Vinted checker
 
 on:
   schedule:
-    - cron: "*/15 * * * *"   # kas 15 minuciu
+    - cron: "*/5 * * * *"   # kas 15 minuciu
   workflow_dispatch:          # leidzia paleisti ranka mygtuku
 
 jobs:
