@@ -215,14 +215,26 @@ def should_run_now():
     return True
 
 
-def fetch_page_with_retry(query, page, max_retries=3):
+def fetch_page_with_retry(query, page, max_retries=3, min_price=None, max_price=None, status_ids=None):
     """Uzklausia viena puslapi su pakartojimais:
     - 401/403 -> atnaujina sesija ir bando dar karta (sesija galejo pasenti)
     - 429     -> ilgesne pauze ir bando dar karta (rate limiting)
     - 5xx / tinklo klaida -> backoff ir bando dar karta
-    Grazina items sarasa, tuscia sarasa (nebepuslapiuojam) arba None (viskas zlugo)."""
+    Grazina items sarasa, tuscia sarasa (nebepuslapiuojam) arba None (viskas zlugo).
+
+    min_price/max_price/status_ids paduodami TIESIAI i Vinted uzklausa (API tai
+    palaiko: price_from/price_to/status_ids[] parametrai) - taip Vinted pats
+    atfiltruoja netinkancius skelbimus, ir musu ribotas puslapiu biudzetas
+    (max 10 puslapiu / 960 skelbimu, tai Vinted paties riba) panaudojamas
+    daug efektyviau, nei filtruojant tik po to, kai jau atsiusta."""
     url = BASE + "/api/v2/catalog/items"
     params = {"search_text": query, "per_page": 96, "page": page}
+    if min_price is not None:
+        params["price_from"] = min_price
+    if max_price is not None:
+        params["price_to"] = max_price
+    if status_ids:
+        params["status_ids[]"] = list(status_ids)
     for attempt in range(1, max_retries + 1):
         try:
             resp = session.get(url, params=params, headers=HEADERS, timeout=20)
@@ -259,10 +271,10 @@ def fetch_page_with_retry(query, page, max_retries=3):
     return None
 
 
-def fetch_items(query, pages):
+def fetch_items(query, pages, min_price=None, max_price=None, status_ids=None):
     items = []
     for page in range(1, pages + 1):
-        batch = fetch_page_with_retry(query, page)
+        batch = fetch_page_with_retry(query, page, min_price=min_price, max_price=max_price, status_ids=status_ids)
         if batch is None:      # viskas zlugo – stabdome si modeli
             break
         if not batch:          # daugiau nera – stabdome puslapiavima
@@ -739,7 +751,8 @@ def main():
     for model in MODELS:
         q = model["query"]
         print(f"Tikrinama: '{q}' ({model['min_price']}-{model['max_price']} EUR)...")
-        items = fetch_items(q, PAGES)
+        status_ids_filter = [c for c in ALLOWED_CONDITIONS if isinstance(c, int)] or None
+        items = fetch_items(q, PAGES, min_price=model["min_price"], max_price=model["max_price"], status_ids=status_ids_filter)
         total_fetched += len(items)
         fresh = 0
 
