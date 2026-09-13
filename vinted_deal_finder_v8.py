@@ -800,7 +800,7 @@ def main():
             if item_id is None:
                 continue
             item_id = str(item_id)
-            if item_id in seen:
+            if item_id in new_seen:
                 continue
             new_seen[item_id] = time.time()
             save_seen(new_seen)
