@@ -53,7 +53,7 @@
   "PRICE_LAST_DIGITS": [
     
   ],
-  "PAGES": 3,
+  "PAGES": 10,
   "SLEEP_SECONDS": 3,
   "DRY_RUN": false,
   "DEBUG": false,
