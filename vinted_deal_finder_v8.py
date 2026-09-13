@@ -665,16 +665,20 @@ def record_prices(history, key, prices):
 
 
 def is_relevant_title(query, title):
-    """Apsaugiklis nuo Vinted pilno teksto paieskos klaidingu atitikmenu (pvz.
-    rankine, kurios APRASYME atsitiktinai pamineta 'iPhone 13', bet PATI preke
-    yra kas kita) - Vinted 'search_text' ieskoma per VISA teksta, ne vien
-    pavadinima/kategorija. Reikalaujame, kad uzklausos PIRMASIS zodis
-    (paprastai prekes/modelio pavadinimas, pvz. 'iPhone') butu ir PACIAME
-    skelbimo pavadinime, o ne tik kazkur uzklausos atitikime."""
-    first_word = query.strip().split()[0].lower() if query and query.strip() else ""
-    if not first_word:
+    """Apsaugiklis nuo Vinted pilno teksto paieskos klaidingu atitikmenu -
+    'search_text' ieskoma per VISA teksta (net apraseme), tad gali grazinti
+    visai kitoki daikta (rankine su 'iPhone 13' apraseme) ARBA VISAI KITA TO
+    PACIO PREKES ZENKLO MODELI (pvz. 'iPhone 12' po 'iPhone 13' paieskos -
+    abu turi zodi 'iPhone', bet tai NE ta pati preke).
+
+    Reikalaujame, kad VISI reiksminiai uzklausos zodziai (issk. modelio
+    numeris) butu PACIAME skelbimo pavadinime kaip atskiri zodziai (\\b
+    ribos, kad '13' neuzkabintu '130' ar pan.)."""
+    tokens = re.findall(r"\w+", (query or "").lower())
+    if not tokens:
         return True
-    return first_word in (title or "").lower()
+    t = (title or "").lower()
+    return all(re.search(r"\b" + re.escape(tok) + r"\b", t) for tok in tokens)
 
 
 def market_median(prices):
@@ -853,7 +857,9 @@ def main():
             og = fetch_item_page_og(item_id, url_path)
             time.sleep(DETAIL_SLEEP_SECONDS)
             if og.get("title"):
-                title = og["title"]
+                cleaned_og_title = re.sub(r"\s*\|\s*Vinted\s*$", "", og["title"], flags=re.IGNORECASE).strip()
+                if cleaned_og_title:
+                    title = cleaned_og_title
             description = og.get("description") or ""
 
             if ONLY_LITHUANIAN_TEXT:
