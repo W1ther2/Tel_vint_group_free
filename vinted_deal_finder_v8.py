@@ -664,6 +664,19 @@ def record_prices(history, key, prices):
     history[key].extend((p, now) for p in prices)
 
 
+def is_relevant_title(query, title):
+    """Apsaugiklis nuo Vinted pilno teksto paieskos klaidingu atitikmenu (pvz.
+    rankine, kurios APRASYME atsitiktinai pamineta 'iPhone 13', bet PATI preke
+    yra kas kita) - Vinted 'search_text' ieskoma per VISA teksta, ne vien
+    pavadinima/kategorija. Reikalaujame, kad uzklausos PIRMASIS zodis
+    (paprastai prekes/modelio pavadinimas, pvz. 'iPhone') butu ir PACIAME
+    skelbimo pavadinime, o ne tik kazkur uzklausos atitikime."""
+    first_word = query.strip().split()[0].lower() if query and query.strip() else ""
+    if not first_word:
+        return True
+    return first_word in (title or "").lower()
+
+
 def market_median(prices):
     """Apkarpyta mediana – nukertame 10% pigiausių ir 10% brangiausių,
     kad vienetiniai 'sukčių' ar šlamšto įkainiai nepaveiktų įverčio."""
@@ -718,7 +731,8 @@ def format_alert_message(a):
     desc_esc = html.escape(desc) + ("…" if len((a["desc"] or "")) > 140 else "")
 
     lines = [
-        "<b>" + html.escape(a["query"]) + "</b> | <b>" + f'{a["price"]:.0f} €' + "</b>",
+        "<b>" + html.escape(a["title"][:100]) + "</b> | <b>" + f'{a["price"]:.0f} €' + "</b>",
+        "<i>(paieška: " + html.escape(a["query"]) + ")</i>",
     ]
     if desc_esc:
         lines.append(desc_esc)
@@ -777,6 +791,7 @@ def main():
         excluded_foreign = 0
         excluded_price_digit = 0
         excluded_condition = 0
+        excluded_irrelevant = 0
 
         for item in items:
             if not isinstance(item, dict):
@@ -808,6 +823,16 @@ def main():
                 continue
 
             title = item.get("title") or item.get("name") or "?"
+
+            # Vinted pilno teksto paieska gali sugrazinti visai kitokia preke,
+            # jei ji APRASYME atsitiktinai pamini paieskos zodi (pvz. rankine su
+            # "tinka prie iPhone 13" apraseje). Tikriname PATI pavadinima.
+            if not is_relevant_title(q, title):
+                excluded_irrelevant += 1
+                if DEBUG:
+                    print(f"  [DEBUG] atmesta (nerelevantiskas pavadinimas): {title[:60]}")
+                continue
+
             url_path = item.get("url") or item.get("path") or item.get("web_url") or ""
             full_url = BASE + url_path if url_path.startswith("/") else url_path
 
@@ -884,7 +909,7 @@ def main():
                 send_telegram_photo(photo, format_alert_message(a))
                 print(f'  -> {q} {price:.0f} EUR: {title[:50]}')
 
-        print(f"  Gauta: {len(items)}, tinkama: {fresh}, atmesta salis: {excluded_by_country}, atmesta uzsienio kalba: {excluded_foreign}, atmesta kainos skaitmuo: {excluded_price_digit}, atmesta bukle: {excluded_condition}")
+        print(f"  Gauta: {len(items)}, tinkama: {fresh}, atmesta salis: {excluded_by_country}, atmesta uzsienio kalba: {excluded_foreign}, atmesta kainos skaitmuo: {excluded_price_digit}, atmesta bukle: {excluded_condition}, atmesta nerelevantiska: {excluded_irrelevant}")
         price_history = save_price_history(price_history)
         time.sleep(SLEEP_SECONDS)
 
