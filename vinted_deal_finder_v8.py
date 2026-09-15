@@ -4,7 +4,6 @@ Vinted deal finder v4 — taisoma kainu nuskaitymas (API kainos formatas pasikei
 """
 
 import requests
-import concurrent.futures as cf
 import json
 import os
 import time
@@ -58,9 +57,6 @@ DEFAULTS = {
     # saugoti vienai (modelis, bukle) porai.
     "PRICE_HISTORY_MAX_AGE_DAYS": 30,
     "PRICE_HISTORY_MAX_PER_KEY": 1000,
-    # Kiek skelbimo puslapiu uzklausu siusti VIENU METU (HTML atsargines
-    # eigos metu), kad paleidimas nebutu lettas, kai daug naujo turinio.
-    "MAX_CONCURRENT_FETCHES": 4,
 }
 
 CONFIG_FILE = "config.json"
@@ -103,7 +99,6 @@ DEBUG = bool(_CFG["DEBUG"])
 SEEN_MAX_AGE_DAYS = int(_CFG["SEEN_MAX_AGE_DAYS"])
 PRICE_HISTORY_MAX_AGE_DAYS = int(_CFG["PRICE_HISTORY_MAX_AGE_DAYS"])
 PRICE_HISTORY_MAX_PER_KEY = int(_CFG["PRICE_HISTORY_MAX_PER_KEY"])
-MAX_CONCURRENT_FETCHES = max(1, int(_CFG.get("MAX_CONCURRENT_FETCHES", 4)))
 SEEN_MAX_ENTRIES = int(_CFG["SEEN_MAX_ENTRIES"])
 # ===================================================
 
@@ -121,6 +116,7 @@ HEADERS = {
 session = requests.Session()
 _debug_price_printed = False
 _debug_user_printed = False
+DETAIL_SLEEP_SECONDS = 1.0  # pauze tarp /api/v2/users/{id} uzklausu (pardavejo info)
 
 
 def init_session():
@@ -271,301 +267,6 @@ def fetch_items(query, pages, min_price=None, max_price=None, status_ids=None):
         items.extend(batch)
         time.sleep(SLEEP_SECONDS)
     return items
-
-
-_ITEM_LINK_RE = re.compile(r'/items/(\d+)-([a-zA-Z0-9\-]{1,150})')
-_debug_search_html_printed = False
-
-
-def _capped_get(url, params, headers, max_bytes, timeout=30):
-    """Bendra pagalbine f-ja: GET su srautiniu skaitymu, sustojant ties
-    max_bytes. Grazina (status_code, tekstas, galutinis_url) arba None klaidos
-    atveju."""
-    resp = session.get(url, params=params, headers=headers, timeout=timeout, stream=True)
-    if resp.status_code != 200:
-        code = resp.status_code
-        resp.close()
-        return code, None, getattr(resp, "url", None)
-    chunks = []
-    total = 0
-    for chunk in resp.iter_content(chunk_size=65536):
-        if not chunk:
-            break
-        chunks.append(chunk)
-        total += len(chunk)
-        if total >= max_bytes:
-            break
-    final_url = resp.url
-    resp.close()
-    return 200, b"".join(chunks).decode("utf-8", errors="ignore"), final_url
-
-
-def fetch_search_page_links(query, page, min_price=None, max_price=None, max_bytes=8_000_000):
-    """/api/v2/catalog/items PANASU, KAD VINTED IŠJUNGĖ - grazina JSON klaida
-    (404, code 104/not_found) VISOMS parametru kombinacijoms, tuo tarpu kiti
-    endpoint'ai (/api/v2/catalog/filters, /api/v2/users/{id}, patys skelbimo
-    puslapiai) veikia normaliai. Tai reiskia route'as pasalintas, ne blokuojamas.
-
-    Vietoj to naudojame PATI REZULTATU PUSLAPI, kuri mato bet kuris lankytojas
-    narsykleje (server-rendered). PIRMA bandome LENGVA variacija - Next.js App
-    Router turi standartini vidini mechanizma ('RSC: 1' antraste), kuri
-    naudoja pats svetaines klientas naviguodamas BE VISO puslapio perkrovimo
-    (CSS/JS/vertimu bloku ir t.t.) - jei serveris ja atpazista, atsakymas
-    buna zymiai lengvesnis (KB, ne MB). Tai NE apejimas - tai vieša, standartine
-    Next.js funkcija, kuria naudoja kiekvienas lankytojas.
-
-    Jei sis lengvas kelias nesuveikia (serveris ji ignoruoja ar grazina kazka
-    nenaudinga), grieztame prie PILNO puslapio (jau patikrinta, kad veikia,
-    tiesiog sunkesnis).
-
-    Bet kuriuo atveju ismenamas TIK PATS PATIKIMIAUSIAS elementas - nuorodos
-    i skelbimus, nes tai nepriklauso nuo tikslios vidines duomenu formos.
-
-    Grazina sarasa [{"id": "...", "url": "/items/...", "price_amount": ...?,
-    "status_id": ...?}, ...] arba [] jei nieko nerasta/klaida."""
-    global _debug_search_html_printed
-    url_path_only = "/catalog"
-    url = BASE + url_path_only
-    params = {"search_text": query, "page": page}
-    if min_price is not None:
-        params["price_from"] = min_price
-    if max_price is not None:
-        params["price_to"] = max_price
-
-    used_rsc = False  # RSC bandymas ATSISAKYTA - Vinted ignoruoja antraste siam
-    # marsrutui (atsakymo dydis liko toks pats, ~6MB), tad tai tik papildoma
-    # uzklausa be jokios naudos.
-    try:
-        status, text, final_url = _capped_get(url, params, HEADERS, max_bytes)
-        if status != 200:
-            print(f"  ! Paieskos puslapis '{query}' p.{page}: HTTP {status}")
-            return []
-        if final_url and BASE.split("//")[1] not in final_url:
-            print(f"  ! ISPEJIMAS: uzklausa buvo nukreipta (redirect) i kitokia URL: {final_url}")
-        html_text = text
-        total = len(text.encode("utf-8", errors="ignore"))
-    except Exception as e:
-        print(f"  ! Nepavyko gauti paieskos puslapio '{query}' p.{page}: {e}")
-        return []
-
-    title_m = re.search(r"<title>([^<]{0,120})</title>", html_text, re.IGNORECASE)
-    seen_ids = set()
-    results = []
-    for m in _ITEM_LINK_RE.finditer(html_text):
-        item_id, slug = m.group(1), m.group(2)
-        if item_id in seen_ids:
-            continue
-        seen_ids.add(item_id)
-        href = f"/items/{item_id}-{slug}"
-        entry = {"id": item_id, "url": href}
-
-        # PIGI (be papildomos uzklausos) kainos/bukles paieska SALIA sios
-        # nuorodos siame jau atsiustame puslapyje - taupo brangu (8MB) atskiro
-        # skelbimo puslapio fetch'a daugumai skelbimu, kurie bet kokiu atveju
-        # nepraeitu kainos/bukles filtro. NEGARANTUOTA tiksliai priskirta -
-        # tankiai sudetame saraso faile gali pagauti kaimynines preces lauka -
-        # todel tai naudojama TIK isankstiniam atmetimui, ne galutiniam
-        # priemimui (galutinis patvirtinimas visada per pilna skelbimo fetch'a).
-        window = html_text[max(0, m.start() - 1500):m.end() + 1500]
-        cheap = _extract_fallback_fields(window)
-        if "price_amount" in cheap:
-            entry["price_amount"] = cheap["price_amount"]
-            entry["price_currency"] = cheap["price_currency"]
-        if "status_id" in cheap:
-            entry["status_id"] = cheap["status_id"]
-
-        results.append(entry)
-
-    with_price = sum(1 for r in results if "price_amount" in r)
-    print(f"  [INFO] paieskos puslapis '{query}' p.{page}: budas={'RSC(lengvas)' if used_rsc else 'pilnas HTML'}, "
-          f"atsiusta {total} baitu, antraste={title_m.group(1) if title_m else '?'!r}, "
-          f"rasta {len(results)} unikaliu skelbimu nuorodu ({with_price} su pigiai rasta kaina).")
-    if not results and not _debug_search_html_printed:
-        print(f"  [INFO] NUORODU NERASTA - HTML atkarpa diagnostikai (nepriklausomai nuo DEBUG, nes tai kritinis signalas):")
-        print(" ", html_text[:2000].replace(chr(10), " "))
-        print(f"  [INFO] atsakymo dydis is viso: {total} baitu (jei labai mazas, gal ne tikras paieskos puslapis atkeliavo).")
-        _debug_search_html_printed = True
-    return results
-
-
-_debug_og_printed = False
-DETAIL_SLEEP_SECONDS = 1.0
-
-_META_TAG_RE = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
-_PROPERTY_RE = re.compile(r'property=["\']([^"\']+)["\']', re.IGNORECASE)
-_CONTENT_RE = re.compile(r'content=["\']([^"\']*)["\']', re.IGNORECASE)
-
-
-def _parse_og_tags(html_text):
-    """Israsko visas property-turincias meta zymas is HTML teksto (ne tik
-    'og:*', bet ir pvz. 'product:price:amount'), nepriklausomai nuo
-    property/content atributu tvarkos tage."""
-    og = {}
-    for tag in _META_TAG_RE.findall(html_text):
-        pm = _PROPERTY_RE.search(tag)
-        if not pm:
-            continue
-        cm = _CONTENT_RE.search(tag)
-        if not cm:
-            continue
-        prop = pm.group(1)
-        key = prop[3:] if prop.startswith("og:") else prop
-        og[key] = html.unescape(cm.group(1))
-    return og
-
-
-# Atsargines (regex) paieskos tiesiai HTML/JSON tekste - naudojamos, kai
-# reikiamu duomenu NERA <meta> zymose. Sios reiksmes NEGARANTUOTOS: jos
-# ieskomos tiesiog kaip teksto fragmentai, nepriklausomai nuo to, kokia
-# tiksliai yra Vinted vidine duomenu struktura (kurios negaliu patikrinti
-# be gyvos prieigos) - DEBUG isvestis parodys, ar kas nors rasta.
-_PRICE_JSON_RE = re.compile(r'"amount"\s*:\s*"?(\d+(?:\.\d+)?)"?\s*,\s*"currency_code"\s*:\s*"([A-Z]{3})"')
-_STATUS_ID_JSON_RE = re.compile(r'"status_id"\s*:\s*(\d+)')
-_MEMBER_ID_RE = re.compile(r'/member/(\d+)-')
-_TITLE_JSON_RE = re.compile(r'"title"\s*:\s*"((?:[^"\\]|\\.){1,200})"')
-_DESC_JSON_RE = re.compile(r'"description"\s*:\s*"((?:[^"\\]|\\.){1,3000})"')
-
-# PATVIRTINTA REALIAIS DUOMENIMIS (per web_fetch i tikra Vinted puslapi):
-# kaina puslapyje rodoma kaip ZMOGUI SKAITOMAS tekstas su KABLELIU ("90,00 €"),
-# NE JSON "amount" laukas - todel _PRICE_JSON_RE aukstai beveik niekada
-# nerasdavo nieko. Bukle irgi rodoma tiesiog zodziu ("Labai gera"), ne
-# skaitiniu ID. Sitie sablonai TURETU buti daug patikimesni.
-_PRICE_TEXT_RE = re.compile(r'(\d{1,3}(?:\.\d{3})*,\d{2})\s*(?:<[^>]{1,80}>\s*)*€')
-_CONDITION_WORDS_LT = ["Nauja su etiketėmis", "Nauja be etikečių", "Labai gera", "Patenkinama", "Neveikianti", "Gera"]
-_CONDITION_TEXT_RE = re.compile("|".join(re.escape(w) for w in sorted(_CONDITION_WORDS_LT, key=len, reverse=True)))
-_CONDITION_TEXT_TO_ID = {
-    "Nauja su etiketėmis": 6, "Nauja be etikečių": 1, "Labai gera": 2,
-    "Gera": 3, "Patenkinama": 4, "Neveikianti": 7,
-}
-
-
-def _json_str_unescape(raw):
-    """Saugiai iskoduoja JSON eilutes escape simbolius (\\n, \\uXXXX ir t.t.)."""
-    try:
-        return json.loads('"' + raw + '"')
-    except (ValueError, json.JSONDecodeError):
-        return raw
-
-
-# TIKSLESNIS sablonas: reikalaujame DVIEJU kainu is eiles su 'įsk' zyme
-# (baze + su pirkejo apsauga), nes tai KUR KAS rezdesnis, maziau atsitiktinai
-# susikertantis pozymis nei vien "X,XX €" (kuris gali priklausyti pristatymo
-# kainai ar kitam nesusijusiam elementui).
-_PRICE_PAIR_TEXT_RE = re.compile(
-    r'(\d{1,3}(?:\.\d{3})*,\d{2})\s*(?:<[^>]{1,80}>\s*)*€\s*(?:<[^>]{1,80}>\s*)*'
-    r'(\d{1,3}(?:\.\d{3})*,\d{2})\s*(?:<[^>]{1,80}>\s*)*€\s*(?:<[^>]{1,80}>\s*)*įsk'
-)
-
-
-def _extract_fallback_fields(html_text):
-    """Bando rasti kaina/bukle/pardavejo ID/pavadinima/aprasyma tiesiog kaip
-    teksto fragmentus puslapyje, NEPARSINANT viso puslapio struktoros.
-
-    DEMESIO: neturiu tikrumo, kad realus (be JavaScript vykdymo) atsakymas
-    apskritai turi zmogui skaitoma kainos teksta - galimai jis egzistuoja tik
-    JAU ATVAIZDUOTAME (po JS) turinyje, o ne ziniame HTTP atsakyme, kuri
-    gauna sis scriptas. PIRMA bandomas GRIEZTESNIS (dvieju kainu poros)
-    sablonas, nes vienas "X,XX €" per lengvai susikerta su nesusijusiu
-    turiniu (pvz. pristatymo kaina)."""
-    out = {}
-
-    m = _PRICE_PAIR_TEXT_RE.search(html_text)
-    if m:
-        out["price_amount"] = m.group(1).replace(".", "").replace(",", ".")
-        out["price_currency"] = "EUR"
-    else:
-        m = _PRICE_TEXT_RE.search(html_text)
-        if m:
-            out["price_amount"] = m.group(1).replace(".", "").replace(",", ".")
-            out["price_currency"] = "EUR"
-        else:
-            m = _PRICE_JSON_RE.search(html_text)
-            if m:
-                out["price_amount"] = m.group(1)
-                out["price_currency"] = m.group(2)
-
-    m = _CONDITION_TEXT_RE.search(html_text)
-    if m:
-        out["status_id"] = _CONDITION_TEXT_TO_ID.get(m.group(0))
-    else:
-        m = _STATUS_ID_JSON_RE.search(html_text)
-        if m:
-            out["status_id"] = int(m.group(1))
-
-    m = _MEMBER_ID_RE.search(html_text)
-    if m:
-        out["seller_id"] = m.group(1)
-    m = _TITLE_JSON_RE.search(html_text)
-    if m:
-        out["title"] = _json_str_unescape(m.group(1))
-    m = _DESC_JSON_RE.search(html_text)
-    if m:
-        out["description"] = _json_str_unescape(m.group(1))
-    return out
-
-
-def fetch_item_page_og(item_id, url_path, max_bytes=8_000_000):
-    """Katalogo/paieskos API skelbimo objekte NERA aprasymo, o atskiras JSON
-    endpoint'as (/api/v2/items/{id}) Vinted DAZNIAUSIAI BLOKUOJA (403, anti-bot
-    apsauga - tai patvirtinta ir populiariuose atviro kodo Vinted scraper'iuose).
-
-    Todel aprasyma skaitome is vieso skelbimo puslapio OpenGraph <meta> zymu
-    (title/description/image/url). PAPILDOMAI (nuo tada, kai /api/v2/catalog/items
-    pats dingo) - is siuo puslapio taip pat bandome atsargiai (regex) istraukti
-    kaina/bukle/pardavejo ID, nes kitaip ju visai neturetume.
-
-    PIRMA bandome LENGVA Next.js RSC uzklausa (ta pati technika kaip
-    fetch_search_page_links) - jei suveikia, sutaupome daug duomenu. RSC
-    atsakyme NERA <meta> zymu (nera HTML apvalkalo is viso), tad tokiu atveju
-    title/description ismenami is JSON teksto fragmentu vietoj OG zymu.
-
-    DEMESIO: jei og:description formatas skiriasi nuo tiketo, arba atsargines
-    paieskos nieko neranda, DEBUG isvestis parodys tiksliai, ka gavome - pagal
-    tai galesim koreguoti. max_bytes=8MB, nes nustatyta, kad puslapio pradzioje
-    yra didziulis (kelis MB) vertimu/lokalizacijos JSON blokas PRIES pasiekiant
-    tikruosius prekes duomenis - su mazesniu limitu jo net nepasiekdavome."""
-    global _debug_og_printed
-    full_url = BASE + url_path if url_path.startswith("/") else url_path
-    try:
-        used_rsc = False  # RSC bandymas ATSISAKYTA - patvirtinta, kad realiame
-        # RSC atsakyme duomenys nera paprastas tekstas su JSON fragmentais, o
-        # eiluciu/nuorodu ("$"-refs) sistema, kuria musu naivus regex kartais
-        # KLAIDINGAI priskiria vieno skelbimo duomenis kitam (stebeta: gauta
-        # kito skelbimo kaina PLN valiuta ir lenkiskas tekstas vietoj tikro,
-        # o "title" tapo pazodiui "$undefined" - RSC protokolo simbolis, ne
-        # tikras tekstas). Duomenu teisingumas svarbiau uz sutaupyma.
-        status, text, _ = _capped_get(full_url, None, HEADERS, max_bytes, timeout=20)
-        if status != 200:
-            if DEBUG:
-                print(f"  [DEBUG] skelbimo puslapio {item_id} uzklausa: HTTP {status}")
-            return {}
-        html_text = text
-        total = len(text.encode("utf-8", errors="ignore"))
-
-        og = _parse_og_tags(html_text)
-        for k, v in _extract_fallback_fields(html_text).items():
-            og.setdefault(k, v)  # OG zymos turi pirmenyba - fallback tik uzpildo spragas
-        if not _debug_og_printed:
-            print(f"  [INFO] skelbimo {item_id} isgauti duomenys (budas={'RSC(lengvas)' if used_rsc else 'pilnas HTML'}, "
-                  f"atsiusta {total} baitu):")
-            print(" ", json.dumps(og, ensure_ascii=False))
-            if "price_amount" not in og:
-                pos = html_text.find('"amount"')
-                if pos == -1:
-                    pos = html_text.find('"status_id"')
-                if pos == -1:
-                    print(f"  [INFO] KAINOS NEPAVYKO RASTI skelbimui {item_id} - zodziu 'amount'/'status_id' "
-                          f"NERA visame atsiustame {total} baitu turinyje (arba duomenys toliau uz limito, "
-                          f"arba visai kitoks laukas).")
-                else:
-                    print(f"  [INFO] KAINOS NEPAVYKO RASTI reikiama forma skelbimui {item_id} - bet rastas "
-                          f"artimiausias 'amount'/'status_id' paminejimas ({total} baitu ribose), kontekstas:")
-                    print(" ", html_text[max(0, pos - 300):pos + 700].replace(chr(10), " "))
-            _debug_og_printed = True
-        return og
-    except Exception as e:
-        print(f"  ! nepavyko gauti skelbimo {item_id} puslapio: {e}")
-        return {}
 
 
 def _to_float(v):
@@ -965,38 +666,17 @@ def format_alert_message(a):
     return "\n".join(lines)
 
 
-def _catalog_item_to_fields(item):
-    """Konvertuoja SENOS (JSON API) preces objekta i ta pacia bendra forma,
-    kokia naudojame visur kitur (title/description/price_amount/status_id/
-    seller_id/image) - kad galetume pakartotinai naudoti visa jau veikiancia
-    filtravimo/pranesimo logika nepriklausomai nuo duomenu saltinio."""
-    out = {}
-    title = item.get("title") or item.get("name")
-    if title:
-        out["title"] = title
-    desc = item.get("description")
-    if desc:
-        out["description"] = desc
-    price_val = get_price(item)
-    if price_val is not None:
-        out["price_amount"] = str(price_val)
-    status_id = item.get("status_id")
-    if isinstance(status_id, int):
-        out["status_id"] = status_id
-    elif isinstance(item.get("status"), str):
-        out["status"] = item.get("status")
-    user = item.get("user") or {}
-    if user.get("id"):
-        out["seller_id"] = str(user["id"])
-    photo = None
+def get_photo_url(item):
+    """Isrenka skelbimo nuotraukos URL is JSON API objekto (keli galimi laukai)."""
     photos = item.get("photos") or []
     if isinstance(photos, list) and photos and isinstance(photos[0], dict):
-        photo = photos[0].get("url") or (photos[0].get("full_size_url"))
-    if not photo and isinstance(item.get("photo"), dict):
-        photo = item["photo"].get("url")
-    if photo:
-        out["image"] = photo
-    return out
+        photo = photos[0].get("url") or photos[0].get("full_size_url")
+        if photo:
+            return photo
+    photo_obj = item.get("photo")
+    if isinstance(photo_obj, dict):
+        return photo_obj.get("url") or ""
+    return ""
 
 
 def main():
@@ -1016,6 +696,10 @@ def main():
         q = model["query"]
         print(f"Tikrinama: '{q}' ({model['min_price']}-{model['max_price']} EUR)...")
 
+        status_ids_filter = [c for c in ALLOWED_CONDITIONS if isinstance(c, int)] or None
+        items = fetch_items(q, PAGES, min_price=model["min_price"], max_price=model["max_price"], status_ids=status_ids_filter)
+        total_fetched += len(items)
+
         fresh = 0
         market_cache = {}
         excluded_by_country = 0
@@ -1023,49 +707,45 @@ def main():
         excluded_price_digit = 0
         excluded_condition = 0
         excluded_irrelevant = 0
-        excluded_no_price = 0
-        skipped_cheap = 0
-        fetched_full_page = 0
 
-        def process_candidate(item_id, url_path, full_url, og):
-            """Bendra logika NUO to momento, kai jau turime (is bet kurio
-            saltinio - JSON API ar HTML skaitymo) preces lauku zodyna 'og'.
-            Grazina True, jei skelbimas priimtas ir issiustas/uzregistruotas."""
-            nonlocal fresh, excluded_by_country, excluded_foreign, excluded_price_digit
-            nonlocal excluded_condition, excluded_irrelevant, excluded_no_price, total_alerts
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            item_id = item.get("id") or item.get("item_id") or item.get("entity_id")
+            if item_id is None:
+                continue
+            item_id = str(item_id)
+            if item_id in new_seen:
+                continue
+            new_seen[item_id] = time.time()
+            save_seen(new_seen)
 
-            price = get_price(og)
-            if price is None:
-                excluded_no_price += 1
-                return False
-            if not (model["min_price"] <= price <= model["max_price"]):
-                return False
+            price = get_price(item)
+            if price is None or not (model["min_price"] <= price <= model["max_price"]):
+                continue
 
             if PRICE_LAST_DIGITS and int(price) % 10 not in PRICE_LAST_DIGITS:
                 excluded_price_digit += 1
-                return False
+                continue
 
-            cond_key, cond_label = get_condition(og)
+            cond_key, cond_label = get_condition(item)
             if ALLOWED_CONDITIONS and cond_label != "nežinoma" and cond_key not in ALLOWED_CONDITIONS and cond_label not in ALLOWED_CONDITIONS:
                 excluded_condition += 1
-                return False
+                continue
 
             record_prices(price_history, f"{q}|{cond_key}", [price])
             if cond_key not in market_cache:
                 market_cache[cond_key] = market_median([p for p, _ in price_history.get(f"{q}|{cond_key}", [])])
             mkt = market_cache[cond_key]
 
-            title = og.get("title") or "?"
-            cleaned_og_title = re.sub(r"\s*\|\s*Vinted\s*$", "", title, flags=re.IGNORECASE).strip()
-            if cleaned_og_title:
-                title = cleaned_og_title
-            description = og.get("description") or ""
+            title = item.get("title") or item.get("name") or "?"
+            description = item.get("description") or ""
 
             if not is_relevant_title(q, title):
                 excluded_irrelevant += 1
                 if DEBUG:
                     print(f"  [DEBUG] atmesta (nerelevantiskas pavadinimas): {title[:60]}")
-                return False
+                continue
 
             if ONLY_LITHUANIAN_TEXT:
                 lang = detect_foreign_language(title, description)
@@ -1073,30 +753,36 @@ def main():
                     excluded_foreign += 1
                     if DEBUG:
                         print(f"  [DEBUG] atmesta (kalba={lang}): {title[:60]}")
-                    return False
+                    continue
 
             if is_junk(title):
-                return False
+                continue
 
+            catalog_user = item.get("user") or {}
             user_info = {}
             country = None
             if FETCH_SELLER_INFO:
-                seller_id = og.get("seller_id")
-                user_info = fetch_user_info(seller_id)
+                user_id = catalog_user.get("id")
+                user_info = fetch_user_info(user_id)
                 time.sleep(DETAIL_SLEEP_SECONDS)
                 country = (user_info.get("country_code") or "").upper() or None
+            if not country:
+                country = get_country_code(item)
 
             country_ok = (country in ALLOWED_COUNTRY_CODES) if country else (not REQUIRE_KNOWN_COUNTRY)
             if not country_ok:
                 excluded_by_country += 1
                 if DEBUG:
                     print(f"  [DEBUG] atmesta (salis={country}): {title[:60]}")
-                return False
+                continue
 
             rep, cnt = get_seller_info(user_info)
-            photo = og.get("image") or ""
+            url_path = item.get("url") or item.get("path") or item.get("web_url") or ""
+            full_url = BASE + url_path if url_path.startswith("/") else url_path
+            photo = get_photo_url(item)
             if photo.startswith("/"):
                 photo = BASE + photo
+
             a = {
                 "query": q, "title": title, "price": price,
                 "url": full_url, "desc": description,
@@ -1114,101 +800,8 @@ def main():
             else:
                 send_telegram_photo(photo, format_alert_message(a))
                 print(f'  -> {q} {price:.0f} EUR: {title[:50]}')
-            return True
 
-        # PIRMA bandome SENA, LENGVA JSON API - jei Vinted ji atstate, tai
-        # kainuoja tik viena maza uzklausa modeliui, ir turime VISUS duomenis
-        # is karto (be jokio spejimo/regex). Tik jei ji negrazina nieko
-        # (vis dar 404), pereiname prie sunkesnio HTML skaitymo.
-        status_ids_filter = [c for c in ALLOWED_CONDITIONS if isinstance(c, int)] or None
-        json_items = fetch_items(q, PAGES, min_price=model["min_price"], max_price=model["max_price"], status_ids=status_ids_filter)
-
-        if json_items:
-            print(f"  [INFO] SENAS JSON API VEIKIA! Gauta {len(json_items)} skelbimu vienu lengvu budu.")
-            total_fetched += len(json_items)
-            for item in json_items:
-                if not isinstance(item, dict):
-                    continue
-                item_id = item.get("id") or item.get("item_id") or item.get("entity_id")
-                if item_id is None:
-                    continue
-                item_id = str(item_id)
-                if item_id in new_seen:
-                    continue
-                new_seen[item_id] = time.time()
-                save_seen(new_seen)
-                url_path = item.get("url") or item.get("path") or item.get("web_url") or ""
-                full_url = BASE + url_path if url_path.startswith("/") else url_path
-                og = _catalog_item_to_fields(item)
-                process_candidate(item_id, url_path, full_url, og)
-        else:
-            print(f"  [INFO] JSON API negrazino duomenu (vis dar 404?) - naudojamas HTML skaitymas.")
-            links = []
-            for page in range(1, PAGES + 1):
-                page_links = fetch_search_page_links(q, page, min_price=model["min_price"], max_price=model["max_price"])
-                if not page_links:
-                    break
-                links.extend(page_links)
-                time.sleep(SLEEP_SECONDS)
-            total_fetched += len(links)
-
-            # PIRMAS PRAEJIMAS: greitas, be tinklo - pazymime seen ir atmetame
-            # pigiai netinkancius. Surenkame LIKUSIUS kandidatus i sarasa.
-            candidates = []
-            for link in links:
-                item_id = link.get("id")
-                if not item_id:
-                    continue
-                item_id = str(item_id)
-                if item_id in new_seen:
-                    continue
-                new_seen[item_id] = time.time()
-                save_seen(new_seen)
-
-                url_path = link.get("url") or ""
-                full_url = BASE + url_path if url_path.startswith("/") else url_path
-
-                cheap_price = get_price(link) if "price_amount" in link else None
-                if cheap_price is not None and not (model["min_price"] <= cheap_price <= model["max_price"]):
-                    skipped_cheap += 1
-                    continue
-                if cheap_price is not None and PRICE_LAST_DIGITS and int(cheap_price) % 10 not in PRICE_LAST_DIGITS:
-                    skipped_cheap += 1
-                    excluded_price_digit += 1
-                    continue
-                if ALLOWED_CONDITIONS and "status_id" in link:
-                    cheap_key, cheap_label = get_condition(link)
-                    if cheap_label != "nežinoma" and cheap_key not in ALLOWED_CONDITIONS and cheap_label not in ALLOWED_CONDITIONS:
-                        skipped_cheap += 1
-                        excluded_condition += 1
-                        continue
-
-                candidates.append((item_id, url_path, full_url))
-
-            fetched_full_page += len(candidates)
-            if candidates:
-                print(f"  [INFO] {len(candidates)} kandidatu - atsiunciama lygiagreciai ({MAX_CONCURRENT_FETCHES} vienu metu)...")
-
-            # ANTRAS PRAEJIMAS: LYGIAGRETUS tinklo darbas (leciausia dalis) -
-            # bet tik pats atsisiuntimas; alert'u siuntimas/registravimas
-            # (process_candidate) lieka nuoseklus, kad nebutu lenktyniavimo
-            # del bendru kintamuju (new_seen/price_history/skaitikliai).
-            def _fetch_one(c):
-                iid, up, _ = c
-                og_ = fetch_item_page_og(iid, up)
-                time.sleep(DETAIL_SLEEP_SECONDS)
-                return og_
-
-            if candidates:
-                with cf.ThreadPoolExecutor(max_workers=MAX_CONCURRENT_FETCHES) as executor:
-                    ogs = list(executor.map(_fetch_one, candidates))
-                # TRECIAS PRAEJIMAS: nuoseklus rezultatu apdorojimas TA PACIA
-                # tvarka, kokia buvo rasti (executor.map islaiko tvarka).
-                for (item_id, url_path, full_url), og in zip(candidates, ogs):
-                    process_candidate(item_id, url_path, full_url, og)
-
-        print(f"  tinkama: {fresh}, atmesta salis: {excluded_by_country}, atmesta uzsienio kalba: {excluded_foreign}, atmesta kainos skaitmuo: {excluded_price_digit}, atmesta bukle: {excluded_condition}, atmesta nerelevantiska: {excluded_irrelevant}, nerasta kainos: {excluded_no_price}")
-        print(f"  [KASTAI] pigiai atmesta (be papildomos uzklausos): {skipped_cheap}, brangiu skelbimo puslapio uzklausu: {fetched_full_page}")
+        print(f"  Gauta: {len(items)}, tinkama: {fresh}, atmesta salis: {excluded_by_country}, atmesta uzsienio kalba: {excluded_foreign}, atmesta kainos skaitmuo: {excluded_price_digit}, atmesta bukle: {excluded_condition}, atmesta nerelevantiska: {excluded_irrelevant}")
         price_history = save_price_history(price_history)
         time.sleep(SLEEP_SECONDS)
 
