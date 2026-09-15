@@ -302,7 +302,7 @@ def fetch_items(query, pages, min_price=None, max_price=None, status_ids=None):
     return items
 
 
-_ITEM_LINK_RE = re.compile(r'href="(/items/(\d+)-[^"?#]*)"')
+_ITEM_LINK_RE = re.compile(r'/items/(\d+)-([a-zA-Z0-9\-]{1,150})')
 _debug_search_html_printed = False
 
 
@@ -360,10 +360,11 @@ def fetch_search_page_links(query, page, min_price=None, max_price=None, max_byt
     seen_ids = set()
     results = []
     for m in _ITEM_LINK_RE.finditer(html_text):
-        href, item_id = m.group(1), m.group(2)
+        item_id, slug = m.group(1), m.group(2)
         if item_id in seen_ids:
             continue
         seen_ids.add(item_id)
+        href = f"/items/{item_id}-{slug}"
         results.append({"id": item_id, "url": href})
 
     print(f"  [INFO] paieskos puslapis '{query}' p.{page}: atsiusta {total} baitu, "
