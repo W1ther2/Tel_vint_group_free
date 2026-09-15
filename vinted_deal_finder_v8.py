@@ -447,23 +447,42 @@ def _json_str_unescape(raw):
         return raw
 
 
+# TIKSLESNIS sablonas: reikalaujame DVIEJU kainu is eiles su 'įsk' zyme
+# (baze + su pirkejo apsauga), nes tai KUR KAS rezdesnis, maziau atsitiktinai
+# susikertantis pozymis nei vien "X,XX €" (kuris gali priklausyti pristatymo
+# kainai ar kitam nesusijusiam elementui).
+_PRICE_PAIR_TEXT_RE = re.compile(
+    r'(\d{1,3}(?:\.\d{3})*,\d{2})\s*(?:<[^>]{1,80}>\s*)*€\s*(?:<[^>]{1,80}>\s*)*'
+    r'(\d{1,3}(?:\.\d{3})*,\d{2})\s*(?:<[^>]{1,80}>\s*)*€\s*(?:<[^>]{1,80}>\s*)*įsk'
+)
+
+
 def _extract_fallback_fields(html_text):
     """Bando rasti kaina/bukle/pardavejo ID/pavadinima/aprasyma tiesiog kaip
-    teksto fragmentus puslapyje, NEPARSINANT viso puslapio struktoros. PIRMA
-    bandomi PATVIRTINTI ZMOGUI SKAITOMI sablonai (kaina su kableliu, bukle
-    zodziu), o JSON stiliaus sablonai liktu kaip atsargine priemone, jei
-    Vinted kada nors pakeistu rodoma forma atgal i JSON."""
+    teksto fragmentus puslapyje, NEPARSINANT viso puslapio struktoros.
+
+    DEMESIO: neturiu tikrumo, kad realus (be JavaScript vykdymo) atsakymas
+    apskritai turi zmogui skaitoma kainos teksta - galimai jis egzistuoja tik
+    JAU ATVAIZDUOTAME (po JS) turinyje, o ne ziniame HTTP atsakyme, kuri
+    gauna sis scriptas. PIRMA bandomas GRIEZTESNIS (dvieju kainu poros)
+    sablonas, nes vienas "X,XX €" per lengvai susikerta su nesusijusiu
+    turiniu (pvz. pristatymo kaina)."""
     out = {}
 
-    m = _PRICE_TEXT_RE.search(html_text)
+    m = _PRICE_PAIR_TEXT_RE.search(html_text)
     if m:
         out["price_amount"] = m.group(1).replace(".", "").replace(",", ".")
         out["price_currency"] = "EUR"
     else:
-        m = _PRICE_JSON_RE.search(html_text)
+        m = _PRICE_TEXT_RE.search(html_text)
         if m:
-            out["price_amount"] = m.group(1)
-            out["price_currency"] = m.group(2)
+            out["price_amount"] = m.group(1).replace(".", "").replace(",", ".")
+            out["price_currency"] = "EUR"
+        else:
+            m = _PRICE_JSON_RE.search(html_text)
+            if m:
+                out["price_amount"] = m.group(1)
+                out["price_currency"] = m.group(2)
 
     m = _CONDITION_TEXT_RE.search(html_text)
     if m:
