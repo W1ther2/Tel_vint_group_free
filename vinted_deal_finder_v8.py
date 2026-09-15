@@ -339,6 +339,8 @@ def fetch_search_page_links(query, page, min_price=None, max_price=None, max_byt
             print(f"  ! Paieskos puslapis '{query}' p.{page}: HTTP {resp.status_code}")
             resp.close()
             return []
+        if resp.url and BASE.split("//")[1] not in resp.url:
+            print(f"  ! ISPEJIMAS: uzklausa buvo nukreipta (redirect) i kitokia URL: {resp.url}")
         chunks = []
         total = 0
         for chunk in resp.iter_content(chunk_size=65536):
@@ -354,6 +356,7 @@ def fetch_search_page_links(query, page, min_price=None, max_price=None, max_byt
         print(f"  ! Nepavyko gauti paieskos puslapio '{query}' p.{page}: {e}")
         return []
 
+    title_m = re.search(r"<title>([^<]{0,120})</title>", html_text, re.IGNORECASE)
     seen_ids = set()
     results = []
     for m in _ITEM_LINK_RE.finditer(html_text):
@@ -363,13 +366,14 @@ def fetch_search_page_links(query, page, min_price=None, max_price=None, max_byt
         seen_ids.add(item_id)
         results.append({"id": item_id, "url": href})
 
-    if DEBUG:
-        print(f"  [DEBUG] paieskos puslapis '{query}' p.{page}: atsiusta {total} baitu, "
-              f"rasta {len(results)} unikaliu skelbimu nuorodu.")
-        if not results and not _debug_search_html_printed:
-            print(f"  [DEBUG] nuorodu nerasta - HTML atkarpa diagnostikai (pirmi 1500 simb.):")
-            print(" ", html_text[:1500].replace(chr(10), " "))
-            _debug_search_html_printed = True
+    print(f"  [INFO] paieskos puslapis '{query}' p.{page}: atsiusta {total} baitu, "
+          f"antraste={title_m.group(1) if title_m else '?'!r}, "
+          f"rasta {len(results)} unikaliu skelbimu nuorodu.")
+    if not results and not _debug_search_html_printed:
+        print(f"  [INFO] NUORODU NERASTA - HTML atkarpa diagnostikai (nepriklausomai nuo DEBUG, nes tai kritinis signalas):")
+        print(" ", html_text[:2000].replace(chr(10), " "))
+        print(f"  [INFO] atsakymo dydis is viso: {total} baitu (jei labai mazas, gal ne tikras paieskos puslapis atkeliavo).")
+        _debug_search_html_printed = True
     return results
 
 
