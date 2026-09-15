@@ -467,14 +467,17 @@ def fetch_item_page_og(item_id, url_path, max_bytes=1_500_000):
         html_text = b"".join(chunks).decode("utf-8", errors="ignore")
         og = _parse_og_tags(html_text)
         og.update(_extract_fallback_fields(html_text))
-        if DEBUG and not _debug_og_printed:
-            print(f"  [DEBUG] skelbimo {item_id} isgauti duomenys (OG + atsargines paieskos):")
+        if not _debug_og_printed:
+            print(f"  [INFO] skelbimo {item_id} isgauti duomenys (OG + atsargines paieskos):")
             print(" ", json.dumps(og, ensure_ascii=False))
+            if "price_amount" not in og:
+                print(f"  [INFO] KAINOS NEPAVYKO RASTI skelbimui {item_id} - HTML atkarpa (2000 simb. nuo vidurio, kur dazniausiai buna embedded duomenys):")
+                mid = len(html_text) // 2
+                print(" ", html_text[mid:mid + 2000].replace(chr(10), " "))
             _debug_og_printed = True
         return og
     except Exception as e:
-        if DEBUG:
-            print(f"  [DEBUG] nepavyko gauti skelbimo {item_id} puslapio: {e}")
+        print(f"  ! nepavyko gauti skelbimo {item_id} puslapio: {e}")
         return {}
 
 
@@ -911,6 +914,7 @@ def main():
         excluded_price_digit = 0
         excluded_condition = 0
         excluded_irrelevant = 0
+        excluded_no_price = 0
 
         for link in links:
             item_id = link.get("id")
@@ -933,7 +937,10 @@ def main():
             time.sleep(DETAIL_SLEEP_SECONDS)
 
             price = get_price(og)
-            if price is None or not (model["min_price"] <= price <= model["max_price"]):
+            if price is None:
+                excluded_no_price += 1
+                continue
+            if not (model["min_price"] <= price <= model["max_price"]):
                 continue
 
             if PRICE_LAST_DIGITS and int(price) % 10 not in PRICE_LAST_DIGITS:
@@ -1021,7 +1028,7 @@ def main():
                 send_telegram_photo(photo, format_alert_message(a))
                 print(f'  -> {q} {price:.0f} EUR: {title[:50]}')
 
-        print(f"  Gauta nuorodu: {len(links)}, tinkama: {fresh}, atmesta salis: {excluded_by_country}, atmesta uzsienio kalba: {excluded_foreign}, atmesta kainos skaitmuo: {excluded_price_digit}, atmesta bukle: {excluded_condition}, atmesta nerelevantiska: {excluded_irrelevant}")
+        print(f"  Gauta nuorodu: {len(links)}, tinkama: {fresh}, atmesta salis: {excluded_by_country}, atmesta uzsienio kalba: {excluded_foreign}, atmesta kainos skaitmuo: {excluded_price_digit}, atmesta bukle: {excluded_condition}, atmesta nerelevantiska: {excluded_irrelevant}, nerasta kainos: {excluded_no_price}")
         price_history = save_price_history(price_history)
         time.sleep(SLEEP_SECONDS)
 
