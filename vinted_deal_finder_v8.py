@@ -220,21 +220,29 @@ def fetch_page_with_retry(query, page, max_retries=3, min_price=None, max_price=
     - 401/403 -> atnaujina sesija ir bando dar karta (sesija galejo pasenti)
     - 429     -> ilgesne pauze ir bando dar karta (rate limiting)
     - 5xx / tinklo klaida -> backoff ir bando dar karta
-    Grazina items sarasa, tuscia sarasa (nebepuslapiuojam) arba None (viskas zlugo).
-
-    min_price/max_price/status_ids paduodami TIESIAI i Vinted uzklausa (API tai
-    palaiko: price_from/price_to/status_ids[] parametrai) - taip Vinted pats
-    atfiltruoja netinkancius skelbimus, ir musu ribotas puslapiu biudzetas
-    (max 10 puslapiu / 960 skelbimu, tai Vinted paties riba) panaudojamas
-    daug efektyviau, nei filtruojant tik po to, kai jau atsiusta."""
+    - 400/404 SU price_from/price_to/status_ids filtrais -> BANDOMA DAR KARTA
+      BE JU (galbut sitie parametrai/ju formatas Vinted API nebepalaikomas -
+      neturiu galimybes to pries tai patikrinti be gyvo API), kad neprarastume
+      viso funkcionalumo, jei problema butent siuose parametruose.
+    Grazina items sarasa, tuscia sarasa (nebepuslapiuojam) arba None (viskas zlugo)."""
     url = BASE + "/api/v2/catalog/items"
-    params = {"search_text": query, "per_page": 96, "page": page}
-    if min_price is not None:
-        params["price_from"] = min_price
-    if max_price is not None:
-        params["price_to"] = max_price
-    if status_ids:
-        params["status_ids[]"] = list(status_ids)
+
+    def build_params(with_filters):
+        p = {"search_text": query, "per_page": 96, "page": page}
+        if with_filters:
+            if min_price is not None:
+                p["price_from"] = min_price
+            if max_price is not None:
+                p["price_to"] = max_price
+            if status_ids:
+                p["status_ids[]"] = list(status_ids)
+        return p
+
+    has_filters = min_price is not None or max_price is not None or status_ids
+    params = build_params(with_filters=True)
+    filters_active = True
+    fallback_tried = False
+
     for attempt in range(1, max_retries + 1):
         try:
             resp = session.get(url, params=params, headers=HEADERS, timeout=20)
@@ -252,6 +260,13 @@ def fetch_page_with_retry(query, page, max_retries=3, min_price=None, max_price=
                 print(f"  ! Serverio klaida {resp.status_code} (bandymas {attempt}/{max_retries})")
                 time.sleep(SLEEP_SECONDS * attempt)
                 continue
+            if resp.status_code in (400, 404) and has_filters and filters_active and not fallback_tried:
+                print(f"  ! '{query}' p.{page}: HTTP {resp.status_code} SU price_from/price_to/status_ids "
+                      f"filtrais - bandau dar karta BE JU...")
+                params = build_params(with_filters=False)
+                filters_active = False
+                fallback_tried = True
+                continue
             if resp.status_code != 200:
                 print(f"  ! '{query}' p.{page}: HTTP {resp.status_code}: {resp.text[:200]}")
                 return None
@@ -263,6 +278,9 @@ def fetch_page_with_retry(query, page, max_retries=3, min_price=None, max_price=
             if not isinstance(batch, list):
                 print(f"  ! '{query}' p.{page}: 'items' nera sarasas – API struktura galejo pasikeisti")
                 return None
+            if fallback_tried and not filters_active:
+                print(f"  [INFO] '{query}' p.{page}: suveike TIK BE price_from/price_to/status_ids filtru "
+                      f"- sie parametrai greiciausiai nebepalaikomi/neteisingi.")
             return batch
         except (requests.RequestException, ValueError) as e:
             print(f"  ! Tinklo/JSON klaida (bandymas {attempt}/{max_retries}): {e}")
