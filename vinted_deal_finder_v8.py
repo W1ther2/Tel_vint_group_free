@@ -4,6 +4,7 @@ Vinted deal finder v4 — taisoma kainu nuskaitymas (API kainos formatas pasikei
 """
 
 import requests
+import concurrent.futures as cf
 import json
 import os
 import time
@@ -57,6 +58,9 @@ DEFAULTS = {
     # saugoti vienai (modelis, bukle) porai.
     "PRICE_HISTORY_MAX_AGE_DAYS": 30,
     "PRICE_HISTORY_MAX_PER_KEY": 1000,
+    # Kiek skelbimo puslapiu uzklausu siusti VIENU METU (HTML atsargines
+    # eigos metu), kad paleidimas nebutu lettas, kai daug naujo turinio.
+    "MAX_CONCURRENT_FETCHES": 4,
 }
 
 CONFIG_FILE = "config.json"
@@ -99,6 +103,7 @@ DEBUG = bool(_CFG["DEBUG"])
 SEEN_MAX_AGE_DAYS = int(_CFG["SEEN_MAX_AGE_DAYS"])
 PRICE_HISTORY_MAX_AGE_DAYS = int(_CFG["PRICE_HISTORY_MAX_AGE_DAYS"])
 PRICE_HISTORY_MAX_PER_KEY = int(_CFG["PRICE_HISTORY_MAX_PER_KEY"])
+MAX_CONCURRENT_FETCHES = max(1, int(_CFG.get("MAX_CONCURRENT_FETCHES", 4)))
 SEEN_MAX_ENTRIES = int(_CFG["SEEN_MAX_ENTRIES"])
 # ===================================================
 
@@ -1108,6 +1113,9 @@ def main():
                 time.sleep(SLEEP_SECONDS)
             total_fetched += len(links)
 
+            # PIRMAS PRAEJIMAS: greitas, be tinklo - pazymime seen ir atmetame
+            # pigiai netinkancius. Surenkame LIKUSIUS kandidatus i sarasa.
+            candidates = []
             for link in links:
                 item_id = link.get("id")
                 if not item_id:
@@ -1121,10 +1129,6 @@ def main():
                 url_path = link.get("url") or ""
                 full_url = BASE + url_path if url_path.startswith("/") else url_path
 
-                # PIGUS isankstinis patikrinimas - jei paieskos puslapyje jau
-                # radome sio skelbimo kaina/bukle (be papildomos uzklausos),
-                # is karto atmetame akivaizdziai netinkancius, KAD NEREIKETU
-                # brangios (iki 8MB) atskiro skelbimo puslapio uzklausos.
                 cheap_price = get_price(link) if "price_amount" in link else None
                 if cheap_price is not None and not (model["min_price"] <= cheap_price <= model["max_price"]):
                     skipped_cheap += 1
@@ -1140,10 +1144,29 @@ def main():
                         excluded_condition += 1
                         continue
 
-                fetched_full_page += 1
-                og = fetch_item_page_og(item_id, url_path)
+                candidates.append((item_id, url_path, full_url))
+
+            fetched_full_page += len(candidates)
+            if candidates:
+                print(f"  [INFO] {len(candidates)} kandidatu - atsiunciama lygiagreciai ({MAX_CONCURRENT_FETCHES} vienu metu)...")
+
+            # ANTRAS PRAEJIMAS: LYGIAGRETUS tinklo darbas (leciausia dalis) -
+            # bet tik pats atsisiuntimas; alert'u siuntimas/registravimas
+            # (process_candidate) lieka nuoseklus, kad nebutu lenktyniavimo
+            # del bendru kintamuju (new_seen/price_history/skaitikliai).
+            def _fetch_one(c):
+                iid, up, _ = c
+                og_ = fetch_item_page_og(iid, up)
                 time.sleep(DETAIL_SLEEP_SECONDS)
-                process_candidate(item_id, url_path, full_url, og)
+                return og_
+
+            if candidates:
+                with cf.ThreadPoolExecutor(max_workers=MAX_CONCURRENT_FETCHES) as executor:
+                    ogs = list(executor.map(_fetch_one, candidates))
+                # TRECIAS PRAEJIMAS: nuoseklus rezultatu apdorojimas TA PACIA
+                # tvarka, kokia buvo rasti (executor.map islaiko tvarka).
+                for (item_id, url_path, full_url), og in zip(candidates, ogs):
+                    process_candidate(item_id, url_path, full_url, og)
 
         print(f"  tinkama: {fresh}, atmesta salis: {excluded_by_country}, atmesta uzsienio kalba: {excluded_foreign}, atmesta kainos skaitmuo: {excluded_price_digit}, atmesta bukle: {excluded_condition}, atmesta nerelevantiska: {excluded_irrelevant}, nerasta kainos: {excluded_no_price}")
         print(f"  [KASTAI] pigiai atmesta (be papildomos uzklausos): {skipped_cheap}, brangiu skelbimo puslapio uzklausu: {fetched_full_page}")
