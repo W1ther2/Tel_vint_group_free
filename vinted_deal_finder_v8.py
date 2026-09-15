@@ -9,7 +9,6 @@ import os
 import time
 import re
 import html
-import random
 
 # ========== SUSIKONFIGUROK SITAS EILUTES ==========
 # BOT_TOKEN ir CHAT_ID imami is aplinkos kintamuju (GitHub Secrets).
@@ -54,10 +53,6 @@ DEFAULTS = {
     "DEBUG": False,
     "SEEN_MAX_AGE_DAYS": 7,
     "SEEN_MAX_ENTRIES": 10000,
-    # Realus patikrinimas ivyks ne tiksliai kas N minuciu, o atsitiktiniu
-    # intervalu tarp situ dvieju reiksmiu (minutemis).
-    "CHECK_INTERVAL_MIN_MINUTES": 15,
-    "CHECK_INTERVAL_MAX_MINUTES": 17,
     # Rinkos kainos istorija: kiek dienu laikyti taskus ir kiek daugiausiai
     # saugoti vienai (modelis, bukle) porai.
     "PRICE_HISTORY_MAX_AGE_DAYS": 30,
@@ -105,8 +100,6 @@ SEEN_MAX_AGE_DAYS = int(_CFG["SEEN_MAX_AGE_DAYS"])
 PRICE_HISTORY_MAX_AGE_DAYS = int(_CFG["PRICE_HISTORY_MAX_AGE_DAYS"])
 PRICE_HISTORY_MAX_PER_KEY = int(_CFG["PRICE_HISTORY_MAX_PER_KEY"])
 SEEN_MAX_ENTRIES = int(_CFG["SEEN_MAX_ENTRIES"])
-CHECK_INTERVAL_MIN_MINUTES = float(_CFG["CHECK_INTERVAL_MIN_MINUTES"])
-CHECK_INTERVAL_MAX_MINUTES = float(_CFG["CHECK_INTERVAL_MAX_MINUTES"])
 # ===================================================
 
 BASE = "https://www.vinted.lt"
@@ -180,39 +173,12 @@ def save_seen(seen):
         json.dump(seen, f)
 
 
-LAST_RUN_FILE = "last_run.json"
-
-
-def should_run_now():
-    """Vietoj to, kad tikrintume skelbimus TIKSLIAI kas N minuciu, laukiam
-    ATSITIKTINIO intervalo is [CHECK_INTERVAL_MIN_MINUTES, CHECK_INTERVAL_MAX_MINUTES].
-    Jei nuo paskutinio TIKRO patikrinimo dar nepraejo tiek laiko - grazina False
-    ir main() is karto baigia darba (jokiu API uzklausu, jokio Telegram).
-
-    SVARBU: kad tai realiai duotu 15-17 min efektyvu intervala, GitHub Actions
-    workflow .yml faile cron TURI vykti DAZNIAU nei 15 min (pvz. '*/5 * * * *')
-    - sitas kodas tik SPRENDZIA, ar praleisti konkretu iskvietima, jis pats
-    savęs periodiskai neiskviecia. .yml failo neturiu, tad ji reikia
-    pakoreguoti atskirai repo nustatymuose."""
-    now = time.time()
-    try:
-        with open(LAST_RUN_FILE, "r", encoding="utf-8") as f:
-            last_run = float(json.load(f).get("last_run", 0))
-    except (FileNotFoundError, json.JSONDecodeError, ValueError, TypeError, OSError):
-        last_run = 0
-
-    target_gap = random.uniform(CHECK_INTERVAL_MIN_MINUTES * 60, CHECK_INTERVAL_MAX_MINUTES * 60)
-    elapsed = now - last_run
-    if elapsed < target_gap:
-        print(f"Dar ne laikas tikrinti (praejo {elapsed/60:.1f} min., reikia ~{target_gap/60:.1f} min.) - praleidziama.")
-        return False
-
-    try:
-        with open(LAST_RUN_FILE, "w", encoding="utf-8") as f:
-            json.dump({"last_run": now}, f)
-    except Exception as e:
-        print(f"! Nepavyko issaugoti {LAST_RUN_FILE}: {e}")
-    return True
+# PASTABA: anksciau cia buvo should_run_now() - atsitiktinio 15-17 min
+# intervalo apsaugiklis. Pasalintas, nes reikalavo TIKSLIAI suderinto GitHub
+# Actions cron daznio (dazniau nei pats intervalas), o be to - lengva
+# nepastebimai sugadinti visa veikima (scriptas tyliai iseidavo is karto,
+# nieko nepadares). Laiko kontrole dabar paliekama pačiam .yml cron
+# tvarkarasciui - paprasciau ir patikimiau.
 
 
 def fetch_page_with_retry(query, page, max_retries=3, min_price=None, max_price=None, status_ids=None):
@@ -990,9 +956,6 @@ def _catalog_item_to_fields(item):
 
 
 def main():
-    if not should_run_now():
-        return
-
     if not BOT_TOKEN or not CHAT_ID:
         print("Nenurodyti BOT_TOKEN / CHAT_ID (GitHub Secrets)!")
         return
