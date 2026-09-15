@@ -306,55 +306,87 @@ _ITEM_LINK_RE = re.compile(r'/items/(\d+)-([a-zA-Z0-9\-]{1,150})')
 _debug_search_html_printed = False
 
 
+def _capped_get(url, params, headers, max_bytes, timeout=30):
+    """Bendra pagalbine f-ja: GET su srautiniu skaitymu, sustojant ties
+    max_bytes. Grazina (status_code, tekstas, galutinis_url) arba None klaidos
+    atveju."""
+    resp = session.get(url, params=params, headers=headers, timeout=timeout, stream=True)
+    if resp.status_code != 200:
+        code = resp.status_code
+        resp.close()
+        return code, None, getattr(resp, "url", None)
+    chunks = []
+    total = 0
+    for chunk in resp.iter_content(chunk_size=65536):
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+        if total >= max_bytes:
+            break
+    final_url = resp.url
+    resp.close()
+    return 200, b"".join(chunks).decode("utf-8", errors="ignore"), final_url
+
+
 def fetch_search_page_links(query, page, min_price=None, max_price=None, max_bytes=8_000_000):
     """/api/v2/catalog/items PANASU, KAD VINTED IŠJUNGĖ - grazina JSON klaida
     (404, code 104/not_found) VISOMS parametru kombinacijoms, tuo tarpu kiti
     endpoint'ai (/api/v2/catalog/filters, /api/v2/users/{id}, patys skelbimo
     puslapiai) veikia normaliai. Tai reiskia route'as pasalintas, ne blokuojamas.
 
-    Vienintelis likes budas gauti paieskos rezultatus - pats REZULTATU
-    PUSLAPIS, kuri mato bet kuris lankytojas narsykleje (server-rendered),
-    bet jis ZYMIAI sunkesnis (keli MB vietoj KB) ir jo vidine duomenu
-    struktura (React Server Components srautas) man nezinoma tiksliai - negaliu
-    jos patikrinti be gyvos prieigos.
+    Vietoj to naudojame PATI REZULTATU PUSLAPI, kuri mato bet kuris lankytojas
+    narsykleje (server-rendered). PIRMA bandome LENGVA variacija - Next.js App
+    Router turi standartini vidini mechanizma ('RSC: 1' antraste), kuri
+    naudoja pats svetaines klientas naviguodamas BE VISO puslapio perkrovimo
+    (CSS/JS/vertimu bloku ir t.t.) - jei serveris ja atpazista, atsakymas
+    buna zymiai lengvesnis (KB, ne MB). Tai NE apejimas - tai vieša, standartine
+    Next.js funkcija, kuria naudoja kiekvienas lankytojas.
 
-    Todel ismenamas TIK PATS PATIKIMIAUSIAS elementas - nuorodos i skelbimus
-    (<a href="/items/NNNN-...">), nes tai standartinis HTML elementas,
-    nepriklausantis nuo Vinted vidines duomenu formos. Kaina/pavadinimas/bukle
-    bus gaunami VELIAU per atskira skelbimo puslapio uzklausa (jau veikiantis
-    fetch_item_page_og() kelias).
+    Jei sis lengvas kelias nesuveikia (serveris ji ignoruoja ar grazina kazka
+    nenaudinga), grieztame prie PILNO puslapio (jau patikrinta, kad veikia,
+    tiesiog sunkesnis).
 
-    Grazina sarasa [{"id": "...", "url": "/items/..."}, ...] arba [] jei
-    nieko nerasta/klaida."""
+    Bet kuriuo atveju ismenamas TIK PATS PATIKIMIAUSIAS elementas - nuorodos
+    i skelbimus, nes tai nepriklauso nuo tikslios vidines duomenu formos.
+
+    Grazina sarasa [{"id": "...", "url": "/items/...", "price_amount": ...?,
+    "status_id": ...?}, ...] arba [] jei nieko nerasta/klaida."""
     global _debug_search_html_printed
-    url = BASE + "/catalog"
+    url_path_only = "/catalog"
+    url = BASE + url_path_only
     params = {"search_text": query, "page": page}
     if min_price is not None:
         params["price_from"] = min_price
     if max_price is not None:
         params["price_to"] = max_price
+
+    html_text = None
+    total = 0
+    used_rsc = False
     try:
-        resp = session.get(url, params=params, headers=HEADERS, timeout=30, stream=True)
-        if resp.status_code != 200:
-            print(f"  ! Paieskos puslapis '{query}' p.{page}: HTTP {resp.status_code}")
-            resp.close()
+        rsc_headers = dict(HEADERS)
+        rsc_headers["RSC"] = "1"
+        rsc_headers["Next-Url"] = url_path_only
+        status, text, _ = _capped_get(url, params, rsc_headers, max_bytes)
+        if status == 200 and text and "/items/" in text:
+            html_text, total, used_rsc = text, len(text.encode("utf-8", errors="ignore")), True
+    except Exception:
+        pass  # tyliai grieztame prie pilno puslapio zemiau
+
+    if html_text is None:
+        try:
+            status, text, final_url = _capped_get(url, params, HEADERS, max_bytes)
+            if status != 200:
+                print(f"  ! Paieskos puslapis '{query}' p.{page}: HTTP {status}")
+                return []
+            if final_url and BASE.split("//")[1] not in final_url:
+                print(f"  ! ISPEJIMAS: uzklausa buvo nukreipta (redirect) i kitokia URL: {final_url}")
+            html_text = text
+            total = len(text.encode("utf-8", errors="ignore"))
+        except Exception as e:
+            print(f"  ! Nepavyko gauti paieskos puslapio '{query}' p.{page}: {e}")
             return []
-        if resp.url and BASE.split("//")[1] not in resp.url:
-            print(f"  ! ISPEJIMAS: uzklausa buvo nukreipta (redirect) i kitokia URL: {resp.url}")
-        chunks = []
-        total = 0
-        for chunk in resp.iter_content(chunk_size=65536):
-            if not chunk:
-                break
-            chunks.append(chunk)
-            total += len(chunk)
-            if total >= max_bytes:
-                break
-        resp.close()
-        html_text = b"".join(chunks).decode("utf-8", errors="ignore")
-    except Exception as e:
-        print(f"  ! Nepavyko gauti paieskos puslapio '{query}' p.{page}: {e}")
-        return []
 
     title_m = re.search(r"<title>([^<]{0,120})</title>", html_text, re.IGNORECASE)
     seen_ids = set()
@@ -386,8 +418,8 @@ def fetch_search_page_links(query, page, min_price=None, max_price=None, max_byt
         results.append(entry)
 
     with_price = sum(1 for r in results if "price_amount" in r)
-    print(f"  [INFO] paieskos puslapis '{query}' p.{page}: atsiusta {total} baitu, "
-          f"antraste={title_m.group(1) if title_m else '?'!r}, "
+    print(f"  [INFO] paieskos puslapis '{query}' p.{page}: budas={'RSC(lengvas)' if used_rsc else 'pilnas HTML'}, "
+          f"atsiusta {total} baitu, antraste={title_m.group(1) if title_m else '?'!r}, "
           f"rasta {len(results)} unikaliu skelbimu nuorodu ({with_price} su pigiai rasta kaina).")
     if not results and not _debug_search_html_printed:
         print(f"  [INFO] NUORODU NERASTA - HTML atkarpa diagnostikai (nepriklausomai nuo DEBUG, nes tai kritinis signalas):")
@@ -431,12 +463,28 @@ def _parse_og_tags(html_text):
 _PRICE_JSON_RE = re.compile(r'"amount"\s*:\s*"?(\d+(?:\.\d+)?)"?\s*,\s*"currency_code"\s*:\s*"([A-Z]{3})"')
 _STATUS_ID_JSON_RE = re.compile(r'"status_id"\s*:\s*(\d+)')
 _MEMBER_ID_RE = re.compile(r'/member/(\d+)-')
+_TITLE_JSON_RE = re.compile(r'"title"\s*:\s*"((?:[^"\\]|\\.){1,200})"')
+_DESC_JSON_RE = re.compile(r'"description"\s*:\s*"((?:[^"\\]|\\.){1,3000})"')
+
+
+def _json_str_unescape(raw):
+    """Saugiai iskoduoja JSON eilutes escape simbolius (\\n, \\uXXXX ir t.t.)."""
+    try:
+        return json.loads('"' + raw + '"')
+    except (ValueError, json.JSONDecodeError):
+        return raw
 
 
 def _extract_fallback_fields(html_text):
-    """Bando rasti kaina/bukle/pardavejo ID tiesiog kaip teksto fragmentus
-    puslapyje (embedded JSON gabalai), NEPARSINANT viso puslapio struktoros -
-    tai patikimiau, kai vidine forma nezinoma/kinta, bet gali ir nerasti."""
+    """Bando rasti kaina/bukle/pardavejo ID/pavadinima/aprasyma tiesiog kaip
+    teksto fragmentus puslapyje (embedded JSON gabalai), NEPARSINANT viso
+    puslapio struktoros - tai patikimiau, kai vidine forma nezinoma/kinta,
+    bet gali ir nerasti. title/description cia reikalingi TIK kaip atsargine
+    priemone - jei puslapyje NERA <meta property='og:*'> zymu (pvz. gavus
+    'lengva' RSC atsakyma be HTML apvalkalo), nes vien JSON reiksme (be
+    konteksto) galima klaidingai pagauti KITO elemento (pvz. 'panasus
+    skelbimai' bloko) lauka, jei jis atsiranda anksciau tekste nei paties
+    skelbimo."""
     out = {}
     m = _PRICE_JSON_RE.search(html_text)
     if m:
@@ -448,6 +496,12 @@ def _extract_fallback_fields(html_text):
     m = _MEMBER_ID_RE.search(html_text)
     if m:
         out["seller_id"] = m.group(1)
+    m = _TITLE_JSON_RE.search(html_text)
+    if m:
+        out["title"] = _json_str_unescape(m.group(1))
+    m = _DESC_JSON_RE.search(html_text)
+    if m:
+        out["description"] = _json_str_unescape(m.group(1))
     return out
 
 
@@ -461,6 +515,11 @@ def fetch_item_page_og(item_id, url_path, max_bytes=8_000_000):
     pats dingo) - is siuo puslapio taip pat bandome atsargiai (regex) istraukti
     kaina/bukle/pardavejo ID, nes kitaip ju visai neturetume.
 
+    PIRMA bandome LENGVA Next.js RSC uzklausa (ta pati technika kaip
+    fetch_search_page_links) - jei suveikia, sutaupome daug duomenu. RSC
+    atsakyme NERA <meta> zymu (nera HTML apvalkalo is viso), tad tokiu atveju
+    title/description ismenami is JSON teksto fragmentu vietoj OG zymu.
+
     DEMESIO: jei og:description formatas skiriasi nuo tiketo, arba atsargines
     paieskos nieko neranda, DEBUG isvestis parodys tiksliai, ka gavome - pagal
     tai galesim koreguoti. max_bytes=8MB, nes nustatyta, kad puslapio pradzioje
@@ -469,27 +528,34 @@ def fetch_item_page_og(item_id, url_path, max_bytes=8_000_000):
     global _debug_og_printed
     full_url = BASE + url_path if url_path.startswith("/") else url_path
     try:
-        resp = session.get(full_url, headers=HEADERS, timeout=20, stream=True)
-        if resp.status_code != 200:
-            if DEBUG:
-                print(f"  [DEBUG] skelbimo puslapio {item_id} uzklausa: HTTP {resp.status_code}")
-            resp.close()
-            return {}
-        chunks = []
+        html_text = None
         total = 0
-        for chunk in resp.iter_content(chunk_size=8192):
-            if not chunk:
-                break
-            chunks.append(chunk)
-            total += len(chunk)
-            if total >= max_bytes:
-                break
-        resp.close()
-        html_text = b"".join(chunks).decode("utf-8", errors="ignore")
+        used_rsc = False
+        try:
+            rsc_headers = dict(HEADERS)
+            rsc_headers["RSC"] = "1"
+            rsc_headers["Next-Url"] = url_path
+            status, text, _ = _capped_get(full_url, None, rsc_headers, max_bytes, timeout=20)
+            if status == 200 and text and ("price" in text or "amount" in text):
+                html_text, total, used_rsc = text, len(text.encode("utf-8", errors="ignore")), True
+        except Exception:
+            pass
+
+        if html_text is None:
+            status, text, _ = _capped_get(full_url, None, HEADERS, max_bytes, timeout=20)
+            if status != 200:
+                if DEBUG:
+                    print(f"  [DEBUG] skelbimo puslapio {item_id} uzklausa: HTTP {status}")
+                return {}
+            html_text = text
+            total = len(text.encode("utf-8", errors="ignore"))
+
         og = _parse_og_tags(html_text)
-        og.update(_extract_fallback_fields(html_text))
+        for k, v in _extract_fallback_fields(html_text).items():
+            og.setdefault(k, v)  # OG zymos turi pirmenyba - fallback tik uzpildo spragas
         if not _debug_og_printed:
-            print(f"  [INFO] skelbimo {item_id} isgauti duomenys (OG + atsargines paieskos), atsiusta {total} baitu:")
+            print(f"  [INFO] skelbimo {item_id} isgauti duomenys (budas={'RSC(lengvas)' if used_rsc else 'pilnas HTML'}, "
+                  f"atsiusta {total} baitu):")
             print(" ", json.dumps(og, ensure_ascii=False))
             if "price_amount" not in og:
                 pos = html_text.find('"amount"')
