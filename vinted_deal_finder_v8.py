@@ -361,32 +361,21 @@ def fetch_search_page_links(query, page, min_price=None, max_price=None, max_byt
     if max_price is not None:
         params["price_to"] = max_price
 
-    html_text = None
-    total = 0
-    used_rsc = False
+    used_rsc = False  # RSC bandymas ATSISAKYTA - Vinted ignoruoja antraste siam
+    # marsrutui (atsakymo dydis liko toks pats, ~6MB), tad tai tik papildoma
+    # uzklausa be jokios naudos.
     try:
-        rsc_headers = dict(HEADERS)
-        rsc_headers["RSC"] = "1"
-        rsc_headers["Next-Url"] = url_path_only
-        status, text, _ = _capped_get(url, params, rsc_headers, max_bytes)
-        if status == 200 and text and "/items/" in text:
-            html_text, total, used_rsc = text, len(text.encode("utf-8", errors="ignore")), True
-    except Exception:
-        pass  # tyliai grieztame prie pilno puslapio zemiau
-
-    if html_text is None:
-        try:
-            status, text, final_url = _capped_get(url, params, HEADERS, max_bytes)
-            if status != 200:
-                print(f"  ! Paieskos puslapis '{query}' p.{page}: HTTP {status}")
-                return []
-            if final_url and BASE.split("//")[1] not in final_url:
-                print(f"  ! ISPEJIMAS: uzklausa buvo nukreipta (redirect) i kitokia URL: {final_url}")
-            html_text = text
-            total = len(text.encode("utf-8", errors="ignore"))
-        except Exception as e:
-            print(f"  ! Nepavyko gauti paieskos puslapio '{query}' p.{page}: {e}")
+        status, text, final_url = _capped_get(url, params, HEADERS, max_bytes)
+        if status != 200:
+            print(f"  ! Paieskos puslapis '{query}' p.{page}: HTTP {status}")
             return []
+        if final_url and BASE.split("//")[1] not in final_url:
+            print(f"  ! ISPEJIMAS: uzklausa buvo nukreipta (redirect) i kitokia URL: {final_url}")
+        html_text = text
+        total = len(text.encode("utf-8", errors="ignore"))
+    except Exception as e:
+        print(f"  ! Nepavyko gauti paieskos puslapio '{query}' p.{page}: {e}")
+        return []
 
     title_m = re.search(r"<title>([^<]{0,120})</title>", html_text, re.IGNORECASE)
     seen_ids = set()
@@ -528,27 +517,20 @@ def fetch_item_page_og(item_id, url_path, max_bytes=8_000_000):
     global _debug_og_printed
     full_url = BASE + url_path if url_path.startswith("/") else url_path
     try:
-        html_text = None
-        total = 0
-        used_rsc = False
-        try:
-            rsc_headers = dict(HEADERS)
-            rsc_headers["RSC"] = "1"
-            rsc_headers["Next-Url"] = url_path
-            status, text, _ = _capped_get(full_url, None, rsc_headers, max_bytes, timeout=20)
-            if status == 200 and text and ("price" in text or "amount" in text):
-                html_text, total, used_rsc = text, len(text.encode("utf-8", errors="ignore")), True
-        except Exception:
-            pass
-
-        if html_text is None:
-            status, text, _ = _capped_get(full_url, None, HEADERS, max_bytes, timeout=20)
-            if status != 200:
-                if DEBUG:
-                    print(f"  [DEBUG] skelbimo puslapio {item_id} uzklausa: HTTP {status}")
-                return {}
-            html_text = text
-            total = len(text.encode("utf-8", errors="ignore"))
+        used_rsc = False  # RSC bandymas ATSISAKYTA - patvirtinta, kad realiame
+        # RSC atsakyme duomenys nera paprastas tekstas su JSON fragmentais, o
+        # eiluciu/nuorodu ("$"-refs) sistema, kuria musu naivus regex kartais
+        # KLAIDINGAI priskiria vieno skelbimo duomenis kitam (stebeta: gauta
+        # kito skelbimo kaina PLN valiuta ir lenkiskas tekstas vietoj tikro,
+        # o "title" tapo pazodiui "$undefined" - RSC protokolo simbolis, ne
+        # tikras tekstas). Duomenu teisingumas svarbiau uz sutaupyma.
+        status, text, _ = _capped_get(full_url, None, HEADERS, max_bytes, timeout=20)
+        if status != 200:
+            if DEBUG:
+                print(f"  [DEBUG] skelbimo puslapio {item_id} uzklausa: HTTP {status}")
+            return {}
+        html_text = text
+        total = len(text.encode("utf-8", errors="ignore"))
 
         og = _parse_og_tags(html_text)
         for k, v in _extract_fallback_fields(html_text).items():
