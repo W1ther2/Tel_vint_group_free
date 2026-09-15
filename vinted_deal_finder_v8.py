@@ -128,6 +128,43 @@ def init_session():
     time.sleep(2)
 
 
+def probe_alt_catalogue_endpoint():
+    """DIAGNOSTINIS bandymas - PATIKRINA, ar egzistuoja anksciau internete
+    rastas (bet NEPATIKIMO saltinio, galimai suklastoto/AI turiniui skirto)
+    'pakaitalo' endpoint'as: https://api.vinted.lt/svc-catalogue/items su
+    X-Anon-Id/X-Csrf-Token antrastemis.
+
+    SVARBU: tai NE pasitikejimas tuo saltiniu - tai tik empirinis PATIKRINIMAS,
+    kas realiai atsitinka, kai issiunciam uzklausa. Rezultatas TIK
+    ATSPAUSDINAMAS diagnostikai - jokiu budu NEINTEGRUOJAMAS i tikra
+    skelbimu paieskos pipeline'a, kol rezultatas nera rankomis patvirtintas
+    kaip tikras ir saugus. Sios funkcijos iskvietimas NIEKAIP neveikia
+    main() darbo eigos ar rezultatu."""
+    print("  [PROBE] Tikrinu neverifikuota 'svc-catalogue' adresa (tik diagnostikai, i rezultatus neitrauksime)...")
+    probe_headers = dict(HEADERS)
+    anon_id = None
+    csrf_token = None
+    for c in session.cookies:
+        name_lower = c.name.lower()
+        if "anon" in name_lower and anon_id is None:
+            anon_id = c.value
+        if "csrf" in name_lower and csrf_token is None:
+            csrf_token = c.value
+    print(f"  [PROBE] slapukuose rasta: anon_id={'yra' if anon_id else 'NERA'}, csrf_token={'yra' if csrf_token else 'NERA'}")
+    if anon_id:
+        probe_headers["X-Anon-Id"] = anon_id
+    if csrf_token:
+        probe_headers["X-Csrf-Token"] = csrf_token
+
+    alt_url = "https://api.vinted.lt/svc-catalogue/items"
+    try:
+        r = session.get(alt_url, params={"search_text": "test"}, headers=probe_headers, timeout=15)
+        print(f"  [PROBE] {alt_url} -> HTTP {r.status_code}")
+        print(f"  [PROBE] atsakymo pradzia (max 300 simb.): {r.text[:300]!r}")
+    except Exception as e:
+        print(f"  [PROBE] uzklausa nepavyko: {type(e).__name__}: {e}")
+
+
 def load_seen():
     """Grazina zodyna {skelbimo_id: laiko_zyme}.
 
@@ -685,6 +722,11 @@ def main():
         return
 
     init_session()
+
+    try:
+        probe_alt_catalogue_endpoint()
+    except Exception as e:
+        print(f"  [PROBE] pati diagnostika nepavyko (nesvarbu, tesiam toliau): {e}")
 
     seen = load_seen()
     new_seen = dict(seen) # <-- IŠTAISYTA ČIA
