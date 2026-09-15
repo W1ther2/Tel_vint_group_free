@@ -365,11 +365,30 @@ def fetch_search_page_links(query, page, min_price=None, max_price=None, max_byt
             continue
         seen_ids.add(item_id)
         href = f"/items/{item_id}-{slug}"
-        results.append({"id": item_id, "url": href})
+        entry = {"id": item_id, "url": href}
 
+        # PIGI (be papildomos uzklausos) kainos/bukles paieska SALIA sios
+        # nuorodos siame jau atsiustame puslapyje - taupo brangu (8MB) atskiro
+        # skelbimo puslapio fetch'a daugumai skelbimu, kurie bet kokiu atveju
+        # nepraeitu kainos/bukles filtro. NEGARANTUOTA tiksliai priskirta -
+        # tankiai sudetame saraso faile gali pagauti kaimynines preces lauka -
+        # todel tai naudojama TIK isankstiniam atmetimui, ne galutiniam
+        # priemimui (galutinis patvirtinimas visada per pilna skelbimo fetch'a).
+        window = html_text[max(0, m.start() - 1500):m.end() + 1500]
+        pm = _PRICE_JSON_RE.search(window)
+        if pm:
+            entry["price_amount"] = pm.group(1)
+            entry["price_currency"] = pm.group(2)
+        sm = _STATUS_ID_JSON_RE.search(window)
+        if sm:
+            entry["status_id"] = int(sm.group(1))
+
+        results.append(entry)
+
+    with_price = sum(1 for r in results if "price_amount" in r)
     print(f"  [INFO] paieskos puslapis '{query}' p.{page}: atsiusta {total} baitu, "
           f"antraste={title_m.group(1) if title_m else '?'!r}, "
-          f"rasta {len(results)} unikaliu skelbimu nuorodu.")
+          f"rasta {len(results)} unikaliu skelbimu nuorodu ({with_price} su pigiai rasta kaina).")
     if not results and not _debug_search_html_printed:
         print(f"  [INFO] NUORODU NERASTA - HTML atkarpa diagnostikai (nepriklausomai nuo DEBUG, nes tai kritinis signalas):")
         print(" ", html_text[:2000].replace(chr(10), " "))
@@ -432,7 +451,7 @@ def _extract_fallback_fields(html_text):
     return out
 
 
-def fetch_item_page_og(item_id, url_path, max_bytes=1_500_000):
+def fetch_item_page_og(item_id, url_path, max_bytes=8_000_000):
     """Katalogo/paieskos API skelbimo objekte NERA aprasymo, o atskiras JSON
     endpoint'as (/api/v2/items/{id}) Vinted DAZNIAUSIAI BLOKUOJA (403, anti-bot
     apsauga - tai patvirtinta ir populiariuose atviro kodo Vinted scraper'iuose).
@@ -444,7 +463,9 @@ def fetch_item_page_og(item_id, url_path, max_bytes=1_500_000):
 
     DEMESIO: jei og:description formatas skiriasi nuo tiketo, arba atsargines
     paieskos nieko neranda, DEBUG isvestis parodys tiksliai, ka gavome - pagal
-    tai galesim koreguoti."""
+    tai galesim koreguoti. max_bytes=8MB, nes nustatyta, kad puslapio pradzioje
+    yra didziulis (kelis MB) vertimu/lokalizacijos JSON blokas PRIES pasiekiant
+    tikruosius prekes duomenis - su mazesniu limitu jo net nepasiekdavome."""
     global _debug_og_printed
     full_url = BASE + url_path if url_path.startswith("/") else url_path
     try:
@@ -468,12 +489,20 @@ def fetch_item_page_og(item_id, url_path, max_bytes=1_500_000):
         og = _parse_og_tags(html_text)
         og.update(_extract_fallback_fields(html_text))
         if not _debug_og_printed:
-            print(f"  [INFO] skelbimo {item_id} isgauti duomenys (OG + atsargines paieskos):")
+            print(f"  [INFO] skelbimo {item_id} isgauti duomenys (OG + atsargines paieskos), atsiusta {total} baitu:")
             print(" ", json.dumps(og, ensure_ascii=False))
             if "price_amount" not in og:
-                print(f"  [INFO] KAINOS NEPAVYKO RASTI skelbimui {item_id} - HTML atkarpa (2000 simb. nuo vidurio, kur dazniausiai buna embedded duomenys):")
-                mid = len(html_text) // 2
-                print(" ", html_text[mid:mid + 2000].replace(chr(10), " "))
+                pos = html_text.find('"amount"')
+                if pos == -1:
+                    pos = html_text.find('"status_id"')
+                if pos == -1:
+                    print(f"  [INFO] KAINOS NEPAVYKO RASTI skelbimui {item_id} - zodziu 'amount'/'status_id' "
+                          f"NERA visame atsiustame {total} baitu turinyje (arba duomenys toliau uz limito, "
+                          f"arba visai kitoks laukas).")
+                else:
+                    print(f"  [INFO] KAINOS NEPAVYKO RASTI reikiama forma skelbimui {item_id} - bet rastas "
+                          f"artimiausias 'amount'/'status_id' paminejimas ({total} baitu ribose), kontekstas:")
+                    print(" ", html_text[max(0, pos - 300):pos + 700].replace(chr(10), " "))
             _debug_og_printed = True
         return og
     except Exception as e:
@@ -915,6 +944,8 @@ def main():
         excluded_condition = 0
         excluded_irrelevant = 0
         excluded_no_price = 0
+        skipped_cheap = 0
+        fetched_full_page = 0
 
         for link in links:
             item_id = link.get("id")
@@ -929,10 +960,33 @@ def main():
             url_path = link.get("url") or ""
             full_url = BASE + url_path if url_path.startswith("/") else url_path
 
-            # Paieskos puslapis duoda TIK nuoroda - kaina/pavadinima/bukle
-            # dabar galima suzinoti TIK apsilankius paciame skelbime (nera
-            # kito budo - katalogo JSON API, is kurio anksciau gaudavome situs
-            # duomenis nemokamai, panasu, kad Vinted pasalino).
+            # PIGUS isankstinis patikrinimas - jei paieskos puslapyje jau
+            # radome sio skelbimo kaina/bukle (be papildomos uzklausos),
+            # is karto atmetame akivaizdziai netinkancius, KAD NEREIKETU
+            # brangios (iki 8MB) atskiro skelbimo puslapio uzklausos.
+            # NEGARANTUOTA tiksliai priskirta (tankiame saraso faile galima
+            # pagauti kaimynines preces lauka), todel naudojama TIK atmetimui,
+            # ne galutiniam priemimui.
+            cheap_price = get_price(link) if "price_amount" in link else None
+            if cheap_price is not None and not (model["min_price"] <= cheap_price <= model["max_price"]):
+                skipped_cheap += 1
+                continue
+            if cheap_price is not None and PRICE_LAST_DIGITS and int(cheap_price) % 10 not in PRICE_LAST_DIGITS:
+                skipped_cheap += 1
+                excluded_price_digit += 1
+                continue
+            if ALLOWED_CONDITIONS and "status_id" in link:
+                cheap_key, cheap_label = get_condition(link)
+                if cheap_label != "nežinoma" and cheap_key not in ALLOWED_CONDITIONS and cheap_label not in ALLOWED_CONDITIONS:
+                    skipped_cheap += 1
+                    excluded_condition += 1
+                    continue
+
+            # Paieskos puslapis duoda TIK nuoroda (+galbut pigiai rasta kaina/
+            # bukle) - pavadinimui/aprasymui/nuotraukai/patvirtintai kainai vis
+            # tiek reikia apsilankyti paciame skelbime. Bet dabar tai darome
+            # TIK kandidatams, kurie jau praejo pigu isankstini filtra.
+            fetched_full_page += 1
             og = fetch_item_page_og(item_id, url_path)
             time.sleep(DETAIL_SLEEP_SECONDS)
 
@@ -1029,6 +1083,7 @@ def main():
                 print(f'  -> {q} {price:.0f} EUR: {title[:50]}')
 
         print(f"  Gauta nuorodu: {len(links)}, tinkama: {fresh}, atmesta salis: {excluded_by_country}, atmesta uzsienio kalba: {excluded_foreign}, atmesta kainos skaitmuo: {excluded_price_digit}, atmesta bukle: {excluded_condition}, atmesta nerelevantiska: {excluded_irrelevant}, nerasta kainos: {excluded_no_price}")
+        print(f"  [KASTAI] pigiai atmesta (be papildomos uzklausos): {skipped_cheap}, brangiu skelbimo puslapio uzklausu: {fetched_full_page} (is {len(links)} nuorodu)")
         price_history = save_price_history(price_history)
         time.sleep(SLEEP_SECONDS)
 
