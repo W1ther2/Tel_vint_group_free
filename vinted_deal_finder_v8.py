@@ -367,13 +367,12 @@ def fetch_search_page_links(query, page, min_price=None, max_price=None, max_byt
         # todel tai naudojama TIK isankstiniam atmetimui, ne galutiniam
         # priemimui (galutinis patvirtinimas visada per pilna skelbimo fetch'a).
         window = html_text[max(0, m.start() - 1500):m.end() + 1500]
-        pm = _PRICE_JSON_RE.search(window)
-        if pm:
-            entry["price_amount"] = pm.group(1)
-            entry["price_currency"] = pm.group(2)
-        sm = _STATUS_ID_JSON_RE.search(window)
-        if sm:
-            entry["status_id"] = int(sm.group(1))
+        cheap = _extract_fallback_fields(window)
+        if "price_amount" in cheap:
+            entry["price_amount"] = cheap["price_amount"]
+            entry["price_currency"] = cheap["price_currency"]
+        if "status_id" in cheap:
+            entry["status_id"] = cheap["status_id"]
 
         results.append(entry)
 
@@ -426,6 +425,19 @@ _MEMBER_ID_RE = re.compile(r'/member/(\d+)-')
 _TITLE_JSON_RE = re.compile(r'"title"\s*:\s*"((?:[^"\\]|\\.){1,200})"')
 _DESC_JSON_RE = re.compile(r'"description"\s*:\s*"((?:[^"\\]|\\.){1,3000})"')
 
+# PATVIRTINTA REALIAIS DUOMENIMIS (per web_fetch i tikra Vinted puslapi):
+# kaina puslapyje rodoma kaip ZMOGUI SKAITOMAS tekstas su KABLELIU ("90,00 €"),
+# NE JSON "amount" laukas - todel _PRICE_JSON_RE aukstai beveik niekada
+# nerasdavo nieko. Bukle irgi rodoma tiesiog zodziu ("Labai gera"), ne
+# skaitiniu ID. Sitie sablonai TURETU buti daug patikimesni.
+_PRICE_TEXT_RE = re.compile(r'(\d{1,3}(?:\.\d{3})*,\d{2})\s*(?:<[^>]{1,80}>\s*)*€')
+_CONDITION_WORDS_LT = ["Nauja su etiketėmis", "Nauja be etikečių", "Labai gera", "Patenkinama", "Neveikianti", "Gera"]
+_CONDITION_TEXT_RE = re.compile("|".join(re.escape(w) for w in sorted(_CONDITION_WORDS_LT, key=len, reverse=True)))
+_CONDITION_TEXT_TO_ID = {
+    "Nauja su etiketėmis": 6, "Nauja be etikečių": 1, "Labai gera": 2,
+    "Gera": 3, "Patenkinama": 4, "Neveikianti": 7,
+}
+
 
 def _json_str_unescape(raw):
     """Saugiai iskoduoja JSON eilutes escape simbolius (\\n, \\uXXXX ir t.t.)."""
@@ -437,22 +449,30 @@ def _json_str_unescape(raw):
 
 def _extract_fallback_fields(html_text):
     """Bando rasti kaina/bukle/pardavejo ID/pavadinima/aprasyma tiesiog kaip
-    teksto fragmentus puslapyje (embedded JSON gabalai), NEPARSINANT viso
-    puslapio struktoros - tai patikimiau, kai vidine forma nezinoma/kinta,
-    bet gali ir nerasti. title/description cia reikalingi TIK kaip atsargine
-    priemone - jei puslapyje NERA <meta property='og:*'> zymu (pvz. gavus
-    'lengva' RSC atsakyma be HTML apvalkalo), nes vien JSON reiksme (be
-    konteksto) galima klaidingai pagauti KITO elemento (pvz. 'panasus
-    skelbimai' bloko) lauka, jei jis atsiranda anksciau tekste nei paties
-    skelbimo."""
+    teksto fragmentus puslapyje, NEPARSINANT viso puslapio struktoros. PIRMA
+    bandomi PATVIRTINTI ZMOGUI SKAITOMI sablonai (kaina su kableliu, bukle
+    zodziu), o JSON stiliaus sablonai liktu kaip atsargine priemone, jei
+    Vinted kada nors pakeistu rodoma forma atgal i JSON."""
     out = {}
-    m = _PRICE_JSON_RE.search(html_text)
+
+    m = _PRICE_TEXT_RE.search(html_text)
     if m:
-        out["price_amount"] = m.group(1)
-        out["price_currency"] = m.group(2)
-    m = _STATUS_ID_JSON_RE.search(html_text)
+        out["price_amount"] = m.group(1).replace(".", "").replace(",", ".")
+        out["price_currency"] = "EUR"
+    else:
+        m = _PRICE_JSON_RE.search(html_text)
+        if m:
+            out["price_amount"] = m.group(1)
+            out["price_currency"] = m.group(2)
+
+    m = _CONDITION_TEXT_RE.search(html_text)
     if m:
-        out["status_id"] = int(m.group(1))
+        out["status_id"] = _CONDITION_TEXT_TO_ID.get(m.group(0))
+    else:
+        m = _STATUS_ID_JSON_RE.search(html_text)
+        if m:
+            out["status_id"] = int(m.group(1))
+
     m = _MEMBER_ID_RE.search(html_text)
     if m:
         out["seller_id"] = m.group(1)
