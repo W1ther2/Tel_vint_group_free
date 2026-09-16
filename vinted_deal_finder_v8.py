@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Vinted deal finder v12 — tik Lietuvos ir patikimi pardavejai, kalba atpazistama su diakritikais ir be.
+Vinted deal finder v13 — defektu zymejimas, tikslus modelis, talpa/baterija, kaina vs vidurkis, "gyvas" pranesimas.
 
 Filtrai, Telegram zinuciu ir log'u isvaizda – tokie patys kaip v8.
 Pakeista tik tai, kaip gaunami skelbimai is Vinted:
@@ -52,6 +52,11 @@ DEFAULTS = {
     "MIN_SELLER_REVIEWS": 3,           # minimalus atsiliepimu skaicius
     "ONLY_LITHUANIAN_TEXT": True,      # kalbos filtras ijungtas
     "ALLOWED_LANGUAGES": ["LT", "EN"], # kokiomis kalbomis skelbimai praleidziami
+    "STRICT_MODEL_MATCH": True,        # "iPhone 13" paieskoje atmesti 13 Pro / Pro Max / mini
+    "DEFECT_ACTION": "flag",           # "flag" = pazymeti ⚠️, "reject" = atmesti, "off" = netikrinti
+    "MIN_BATTERY": 0,                  # min. baterijos % (0 = netikrinti; tikrinama tik jei nurodyta)
+    "SHOW_MARKET_PRICE": True,         # rodyti, kiek pigiau/brangiau uz vidutine kaina
+    "HEARTBEAT_HOURS": 24,             # kas kiek valandu siusti "skriptas veikia" (0 = niekada)
     "PRICE_LAST_DIGITS": [],
     "PAGES": 3,
     "SLEEP_SECONDS": 3,
@@ -99,6 +104,11 @@ PAGES = int(_CFG["PAGES"])
 SLEEP_SECONDS = int(_CFG["SLEEP_SECONDS"])
 DRY_RUN = bool(_CFG["DRY_RUN"])
 DEBUG = bool(_CFG["DEBUG"])
+STRICT_MODEL_MATCH = bool(_CFG["STRICT_MODEL_MATCH"])
+DEFECT_ACTION = str(_CFG["DEFECT_ACTION"]).lower()
+MIN_BATTERY = int(_CFG["MIN_BATTERY"])
+SHOW_MARKET_PRICE = bool(_CFG["SHOW_MARKET_PRICE"])
+HEARTBEAT_HOURS = float(_CFG["HEARTBEAT_HOURS"])
 SEEN_MAX_AGE_DAYS = int(_CFG["SEEN_MAX_AGE_DAYS"])
 SEEN_MAX_ENTRIES = int(_CFG["SEEN_MAX_ENTRIES"])
 # ===================================================
@@ -818,8 +828,26 @@ def format_card(a):
     if desc:
         lines.append(html.escape(desc))
     lines.append("")
+    if a.get("defects"):
+        lines.append(f"⚠️ <b>Galimi defektai:</b> {html.escape(', '.join(a['defects']))}")
     if a.get("condition"):
         lines.append(f"📦 <b>Būklė:</b> {html.escape(a['condition'])}")
+    specs = []
+    if a.get("storage"):
+        specs.append(f"💾 {a['storage']}")
+    if a.get("battery"):
+        specs.append(f"🔋 {a['battery']}%")
+    if specs:
+        lines.append("  ·  ".join(specs))
+    median = a.get("median")
+    if median:
+        diff = (a["price"] - median) / median * 100
+        if diff <= -3:
+            lines.append(f"💰 <b>{abs(diff):.0f}% pigiau</b> už vidutinę kainą ({median:.0f} €)")
+        elif diff >= 3:
+            lines.append(f"📈 {diff:.0f}% brangiau už vidutinę kainą ({median:.0f} €)")
+        else:
+            lines.append(f"📊 Apie vidutinę kainą ({median:.0f} €)")
     score, count = a.get("rating", (None, None))
     if score is not None:
         lines.append(f"⭐ <b>Pardavėjas:</b> {_stars(score)} ({score:.1f}/5, {count} atsiliep.)")
@@ -865,6 +893,136 @@ def send_telegram(text):
         print(f"  ! Nepavyko issiusti Telegram: {e}")
 
 
+# ======================================================================
+# PAPILDOMI FILTRAI: modelis, defektai, talpa/baterija, rinkos kaina
+# ======================================================================
+
+MODEL_VARIANTS = ("pro", "max", "mini", "plus", "ultra", "se")
+
+
+def _model_tokens(text):
+    """'iPhone13ProMax' -> {'iphone', '13', 'pro', 'max'}"""
+    t = _fold(text.lower())
+    t = t.replace("promax", "pro max")
+    t = re.sub(r"(\d)([a-z])", r"\1 \2", t)
+    t = re.sub(r"([a-z])(\d)", r"\1 \2", t)
+    return set(re.findall(r"[a-z]+|\d+", t))
+
+
+def matches_model(query, title):
+    """Ar pavadinimas atitinka paieskos modeli: tas pats numeris ir tie patys
+    variantai (Pro/Max/mini...). 'iPhone 13' neatitinka 'iPhone 13 Pro Max'."""
+    q, t = _model_tokens(query), _model_tokens(title)
+    numbers = {x for x in q if x.isdigit()}
+    if numbers and not numbers <= t:
+        return False
+    for v in MODEL_VARIANTS:
+        if (v in t) != (v in q):
+            return False
+    return True
+
+
+# Defektai: (saknis/fraze be diakritiku, kaip rodyti)
+DEFECT_PATTERNS = [
+    (r"i?skil\w*", "skilęs"), (r"sudauz\w*", "sudaužtas"), (r"dauzt\w*", "daužtas"),
+    (r"cracked|crack", "cracked"), (r"broken", "broken"), (r"sugad\w*", "sugadintas"),
+    (r"neveik\w*", "neveikia"), (r"not working|doesn.?t work", "neveikia"),
+    (r"icloud", "iCloud"), (r"uzblok\w*|blokuot\w*|\blocked\b", "užblokuotas"),
+    (r"dalims|for parts|parts only", "dalims"), (r"damaged|water damage|sulyt\w*|pasemt\w*", "pažeistas"),
+    (r"keist\w* ekran\w*|replaced screen|ne originalus ekranas|neoriginal\w* ekran\w*", "keistas ekranas"),
+    (r"no face ?id|be face ?id", "neveikia Face ID"),
+    (r"remont\w*|reikia keisti", "reikia remonto"), (r"defekt\w*", "defektai"),
+]
+_DEFECT_RE = [(re.compile(r"\b(?:" + pat + r")"), label) for pat, label in DEFECT_PATTERNS]
+_NEGATE_BEFORE = {"be", "nera", "no", "not", "without", "jokiu", "jokio", "nieko", "neturi", "zero", "0"}
+_NEGATE_AFTER = {"atristas", "atrista", "atsietas", "laisvas", "isjungtas", "nera", "free", "off",
+                 "clean", "unlocked", "nepriristas", "neprisietas"}
+
+
+def find_defects(*texts):
+    """Grazina rastu defektu sarasa. Ignoruoja paneigimus: 'be įskilimų',
+    'jokių defektų', 'iCloud atrištas', 'no cracks'."""
+    t = _fold(" ".join(x for x in texts if x).lower())
+    found = []
+    for rx, label in _DEFECT_RE:
+        for m in rx.finditer(t):
+            # paneigimo ieskom iki 4 zodziu atgal, bet ne uz kablelio/tasko
+            before = re.split(r"[.,;!?\n]", t[:m.start()])[-1].split()[-4:]
+            after = re.split(r"[.,;!?\n]", t[m.end():])[0].split()[:2]
+            word = t[m.start():m.end()]
+            if any(w.strip(",.;:!-()") in _NEGATE_BEFORE for w in before):
+                continue
+            if any(w.strip(",.;:!-()") in _NEGATE_AFTER for w in after):
+                continue
+            if label != "neveikia" and word.startswith("ne"):
+                continue
+            # "viskas veikia, niekas neveikia blogai" – retas atvejis, ignoruojam
+            if label not in found:
+                found.append(label)
+            break
+    return found
+
+
+def extract_storage(*texts):
+    t = " ".join(x for x in texts if x).lower()
+    m = re.search(r"\b(64|128|256|512)\s?(?:gb|g|gigabait\w*)\b", t)
+    if m:
+        return f"{m.group(1)} GB"
+    if re.search(r"\b1\s?tb\b", t):
+        return "1 TB"
+    return None
+
+
+def extract_battery(*texts):
+    """Baterijos sveikata %, pvz. 'baterija 87%', 'BH 90%', '85% battery'."""
+    t = _fold(" ".join(x for x in texts if x).lower())
+    pats = [
+        r"(?:baterij\w*|akumuliator\w*|battery(?: health)?|\bbh\b|\bbat\b\.?|sveikat\w*|talpa)\D{0,20}?(\d{2,3})\s?%",
+        r"(\d{2,3})\s?%\s?(?:baterij\w*|battery|\bbh\b|sveikat\w*|talp\w*)",
+    ]
+    for pat in pats:
+        m = re.search(pat, t)
+        if m:
+            v = int(m.group(1))
+            if 50 <= v <= 100:
+                return v
+    return None
+
+
+def market_median(items, query, min_floor):
+    """Vidutine (mediana) kaina pagal visus sios paieskos skelbimus, kurie
+    atitinka modeli ir nera slamstas. None, jei per mazai duomenu."""
+    prices = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        title = it.get("title") or ""
+        if not matches_model(query, title) or is_junk(title):
+            continue
+        p = get_price(it)
+        if p is not None and p >= min_floor:
+            prices.append(p)
+    if len(prices) < 5:
+        return None
+    prices.sort()
+    n = len(prices)
+    return prices[n // 2] if n % 2 else (prices[n // 2 - 1] + prices[n // 2]) / 2
+
+
+def maybe_send_heartbeat(seen, stats):
+    """Kas HEARTBEAT_HOURS siuncia trumpa zinute, kad skriptas veikia.
+    Paskutinio siuntimo laikas saugomas seen.json kaip '__heartbeat__'."""
+    if HEARTBEAT_HOURS <= 0 or DRY_RUN:
+        return
+    last = seen.get("__heartbeat__", 0)
+    if time.time() - last < HEARTBEAT_HOURS * 3600:
+        return
+    send_telegram("✅ <b>Vinted skriptas veikia</b>\n"
+                  f"Šis paleidimas: gauta {stats['fetched']} skelb., naujų {stats['new']}, "
+                  f"išsiųsta {stats['sent']}.")
+    seen["__heartbeat__"] = time.time()
+
+
 def main():
     if not BOT_TOKEN or not CHAT_ID:
         print("Nenurodyti BOT_TOKEN / CHAT_ID (GitHub Secrets)!")
@@ -878,12 +1036,16 @@ def main():
     total_fetched = 0
     unknown_country = 0
     checked_sellers = 0
+    total_new = 0
 
     for model in MODELS:
         q = model["query"]
         print(f"Tikrinama: '{q}' ({model['min_price']}-{model['max_price']} EUR)...")
         items = fetch_items(q, PAGES, seen)
         total_fetched += len(items)
+        median = market_median(items, q, model["min_price"] * 0.5) if SHOW_MARKET_PRICE else None
+        if median:
+            print(f"  Vidutine kaina (mediana): {median:.0f} EUR")
         fresh = 0
         excluded_by_country = 0
         excluded_foreign = 0
@@ -893,6 +1055,9 @@ def main():
         already_seen = 0
         excluded_junk = 0
         page_failed = 0
+        excluded_model = 0
+        excluded_defect = 0
+        excluded_battery = 0
         examples = []                      # keli atmestu skelbimu pavyzdziai log'ui
 
         for item in items:
@@ -914,6 +1079,12 @@ def main():
 
             if PRICE_LAST_DIGITS and int(price) % 10 not in PRICE_LAST_DIGITS:
                 excluded_price_digit += 1
+                continue
+
+            if STRICT_MODEL_MATCH and not matches_model(q, item.get("title") or ""):
+                excluded_model += 1
+                if len(examples) < 5:
+                    examples.append(f"kitas modelis: {(item.get('title') or '')[:50]}")
                 continue
 
             title = item.get("title") or item.get("name") or "?"
@@ -946,6 +1117,21 @@ def main():
 
             if is_junk(title):
                 excluded_junk += 1
+                continue
+
+            defects = find_defects(item.get("title") or "", description) if DEFECT_ACTION != "off" else []
+            if defects and DEFECT_ACTION == "reject":
+                excluded_defect += 1
+                if len(examples) < 5:
+                    examples.append(f"defektai={defects}: {title[:40]}")
+                continue
+
+            storage = extract_storage(item.get("title") or "", description)
+            battery = extract_battery(item.get("title") or "", description)
+            if MIN_BATTERY and battery is not None and battery < MIN_BATTERY:
+                excluded_battery += 1
+                if len(examples) < 5:
+                    examples.append(f"baterija {battery}%: {title[:40]}")
                 continue
 
             # Pardavejas: salis ir patikimumas (tikrinama paskutini – brangiausia)
@@ -987,6 +1173,10 @@ def main():
                 "rating": (rating, reviews) if rating is not None and reviews is not None else (None, None),
                 "country": country,
                 "city": seller.get("city"),
+                "defects": defects,
+                "storage": storage,
+                "battery": battery,
+                "median": median,
             }
             alerts.append(deal)
             fresh += 1
@@ -1003,13 +1193,16 @@ def main():
             if DEBUG:
                 print(f"  [DEBUG] PRIIMTA (salis={country}, {rating}/5): {title[:60]}")
 
-        print(f"  Gauta: {len(items)}, jau matyti: {already_seen}, nauji: {len(items) - already_seen}, tinkama: {fresh}, atmesta salis: {excluded_by_country}, atmesta uzsienio kalba: {excluded_foreign}, atmesta kainos skaitmuo: {excluded_price_digit}, atmesta pardavejas: {excluded_seller}, "
+        total_new += len(items) - already_seen
+        print(f"  Gauta: {len(items)}, jau matyti: {already_seen}, nauji: {len(items) - already_seen}, tinkama: {fresh}, "
+              f"kitas modelis: {excluded_model}, defektai: {excluded_defect}, baterija: {excluded_battery}, atmesta salis: {excluded_by_country}, atmesta uzsienio kalba: {excluded_foreign}, atmesta kainos skaitmuo: {excluded_price_digit}, atmesta pardavejas: {excluded_seller}, "
               f"ne kainos ribose: {excluded_price}, slamstas: {excluded_junk}, "
               f"skelbimo puslapis nepasiekiamas: {page_failed}")
         for ex in examples:
             print(f"    atmesta – {ex}")
         time.sleep(SLEEP_SECONDS)
 
+    maybe_send_heartbeat(new_seen, {"fetched": total_fetched, "new": total_new, "sent": len(alerts)})
     save_seen(new_seen)
 
     # Savaime diagnostika: jei is VISU paiesku negauta nei vieno skelbimo,
