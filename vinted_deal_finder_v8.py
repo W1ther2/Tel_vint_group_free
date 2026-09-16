@@ -46,7 +46,8 @@ DEFAULTS = {
         "hulle", "folija", "grudintas",
     ],
     "ALLOWED_COUNTRY_CODES": ["LT"],
-    "REQUIRE_KNOWN_COUNTRY": True,     # atmesti, jei pardavejo salies nustatyti nepavyko
+    "FILTER_BY_COUNTRY": False,        # False = salis netikrinama, filtruojama tik pagal aprasymo kalba
+    "REQUIRE_KNOWN_COUNTRY": False,    # (tik kai FILTER_BY_COUNTRY) atmesti, jei salis nezinoma
     "MIN_SELLER_RATING": 4.5,          # minimalus pardavejo ivertinimas (0-5)
     "MIN_SELLER_REVIEWS": 3,           # minimalus atsiliepimu skaicius
     "ONLY_LITHUANIAN_TEXT": True,      # kalbos filtras ijungtas
@@ -87,6 +88,7 @@ _CFG = load_config()
 MODELS = _CFG["MODELS"]
 BLACKLIST_WORDS = _CFG["BLACKLIST_WORDS"]
 ALLOWED_COUNTRY_CODES = list(_CFG["ALLOWED_COUNTRY_CODES"])
+FILTER_BY_COUNTRY = bool(_CFG["FILTER_BY_COUNTRY"])
 REQUIRE_KNOWN_COUNTRY = bool(_CFG["REQUIRE_KNOWN_COUNTRY"])
 MIN_SELLER_RATING = float(_CFG["MIN_SELLER_RATING"])
 MIN_SELLER_REVIEWS = int(_CFG["MIN_SELLER_REVIEWS"])
@@ -920,7 +922,10 @@ def main():
             country = seller.get("country")
             if country is None:
                 unknown_country += 1
-            country_ok = (country in ALLOWED_COUNTRY_CODES) if country else (not REQUIRE_KNOWN_COUNTRY)
+            if FILTER_BY_COUNTRY:
+                country_ok = (country in ALLOWED_COUNTRY_CODES) if country else (not REQUIRE_KNOWN_COUNTRY)
+            else:
+                country_ok = True
             if not country_ok:
                 excluded_by_country += 1
                 if len(examples) < 5:
@@ -930,8 +935,9 @@ def main():
                 continue
 
             rating, reviews = seller.get("rating"), seller.get("reviews")
-            if (rating is None or reviews is None or rating < MIN_SELLER_RATING
-                    or reviews < MIN_SELLER_REVIEWS):
+            # Jei reitingo nustatyti nepavyko – neatmetam (kortelėje jo tiesiog nebus)
+            if rating is not None and reviews is not None and (
+                    rating < MIN_SELLER_RATING or reviews < MIN_SELLER_REVIEWS):
                 excluded_seller += 1
                 if len(examples) < 5:
                     examples.append(f"pardavejas {rating}/5, {reviews} atsil.: {title[:40]}")
@@ -947,7 +953,7 @@ def main():
                 "description": description,
                 "photo": get_photo_url(item, og),
                 "condition": condition,
-                "rating": (rating, reviews),
+                "rating": (rating, reviews) if rating is not None and reviews is not None else (None, None),
                 "country": country,
                 "city": seller.get("city"),
             }
@@ -983,7 +989,7 @@ def main():
                       "Priezastis: <code>" + html.escape(last_error or "nezinoma") + "</code>")
 
     # Diagnostika: jei nei vienam pardavejui salies nustatyti nepavyko – pranesam
-    if REQUIRE_KNOWN_COUNTRY and unknown_country and not checked_sellers:
+    if FILTER_BY_COUNTRY and REQUIRE_KNOWN_COUNTRY and unknown_country and not checked_sellers:
         print(f"! {unknown_country} pardaveju salies nustatyti nepavyko – visi atmesti.")
         send_telegram("<b>ISPEJIMAS</b>: nepavyko nustatyti pardaveju salies "
                       f"({unknown_country} skelb.), todel visi atmesti.\n"
