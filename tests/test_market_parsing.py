@@ -69,7 +69,7 @@ class StateVersionTest(unittest.TestCase):
                          "overrides": {"MIN_DISCOUNT": 0.2}, "telegram_offset": 7})
         self.assertEqual(old.market.items, {})
         self.assertEqual((old.overrides, old.telegram_offset), ({"MIN_DISCOUNT": 0.2}, 7))
-        new = State({"market_version": 2, "market": {"items": {"1": {"m": "XR", "p": 100}}}})
+        new = State({"market_version": 3, "market": {"items": {"1": {"m": "XR", "p": 100}}}})
         self.assertIn("1", new.market.items)
 
 

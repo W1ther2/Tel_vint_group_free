@@ -21,8 +21,20 @@ class ModelTest(unittest.TestCase):
             self.assertEqual(detect_model(title), expected, title)
 
     def test_not_models(self):
-        for title in ["iPhone 7", "iPhone SE 2020", "iPhone 18 Pro", "Samsung S21", "iPhone 12 / iPhone 13"]:
+        for title in ["Iphone X 6s XR 13 15pro 8plus 7plus 12pro 11", "iPhone 12 13 14", "iPhone 13 / 13 Pro dėklas",
+                      "iPhone 7", "iPhone SE 2020", "iPhone 18 Pro", "Samsung S21", "iPhone 12 / iPhone 13"]:
             self.assertIsNone(detect_model(title), title)
+
+    def test_single_model_with_numbers(self):
+        self.assertEqual(detect_model("iPhone 13, naudotas 11 mėn"), "13")
+        self.assertEqual(detect_model("iPhone 11 Pro 64GB iOS 17"), "11 Pro")
+
+    def test_description_not_phone(self):
+        from vinted.phone import description_not_phone, min_price
+        self.assertTrue(description_not_phone("TUŠČIOS DĖŽUTĖS EMPTY BOX KAINA GALUTINĖ"))
+        self.assertTrue(description_not_phone("Kaina už visas 50€"))
+        self.assertFalse(description_not_phone("Parduodu telefoną su originalia dėžute, 2 vnt. dėklų"))
+        self.assertEqual(min_price("13"), 90)
 
     def test_normalize(self):
         self.assertEqual(normalize_model_name("13 pro max"), "13 Pro Max")

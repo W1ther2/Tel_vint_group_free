@@ -106,7 +106,7 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(sent["2"][0]["battery"], 91)
             self.assertGreater(sent["2"][0]["profit"], 0)
             for reason in ["neveikiantis / užrakintas / netestuotas", "ne telefonas / kitas modelis", "kalba", "salis",
-                           "per pigu (sugedęs / dalims / ne telefonas?)"]:
+                           "per pigu šiam modeliui (dėžutė / dalys?)"]:
                 self.assertIn(reason, log)
             state = read_json("state.json")
             self.assertEqual(state["market"]["items"]["2"]["a"], 180)
@@ -130,12 +130,15 @@ class FlowTest(unittest.TestCase):
                 item(4, "iPhone XR 64GB", 80, user_id=4, status="Labai gera"),        # linijos ekrane
                 item(5, "iPhone XR 64GB", 90, user_id=5, status="Labai gera"),        # tvarkingas
                 item(6, "iPhone XR 64GB", 88, user_id=6, status="Labai gera"),        # smulkus ibrezimai – ok
+                item(7, "Iphone X 6s XR 13 15pro 8plus 7plus 12pro 11", 50, user_id=7),  # dezutes
+                item(8, "iPhone XR 64GB", 85, user_id=8, status="Labai gera"),        # dezutes (aprasymas)
             ]
             client = FakeClient({"iPhone XR": cat}, pages={
                 "1": "Telefonas įsijungia ir prašo kodo kurio mes nežinome. Toliau netestuotas.",
                 "4": "Veikia, bet ekrane yra žalia linija",
                 "5": "Parduodu tvarkingą telefoną, baterija 88%, siunčiu per Vinted",
                 "6": "Veikia puikiai, yra smulkių įbrėžimų, baterija 90%",
+                "8": "TUŠČIOS DĖŽUTĖS EMPTY BOX. Tuščios orginalios dėžutės, kaina už visas",
             })
             tg = FakeTelegram()
             log = run(client, tg)
@@ -193,7 +196,7 @@ class FlowTest(unittest.TestCase):
         with TempDir():
             from vinted.util import today
             d = today() - 3
-            state = {"market_version": 2, "market": {"items": {str(i): {"m": "13", "s": "128 GB", "p": 190 + i, "f": d, "l": d,
+            state = {"market_version": 3, "market": {"items": {str(i): {"m": "13", "s": "128 GB", "p": 190 + i, "f": d, "l": d,
                                                    "c": d, "st": "active"} for i in range(1, 5)}}}
             write_json("state.json", state)
             client = FakeClient({"iPhone 13": [item(9, "iPhone 13 128GB", 150)]},
