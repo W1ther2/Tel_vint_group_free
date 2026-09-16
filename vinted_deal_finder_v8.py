@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Vinted deal finder v11 — Telegram korteles su nuotrauka, bukle ir pardavejo reitingu.
+Vinted deal finder v12 — tik Lietuvos ir patikimi pardavejai, kalba atpazistama su diakritikais ir be.
 
 Filtrai, Telegram zinuciu ir log'u isvaizda – tokie patys kaip v8.
 Pakeista tik tai, kaip gaunami skelbimai is Vinted:
@@ -46,7 +46,9 @@ DEFAULTS = {
         "hulle", "folija", "grudintas",
     ],
     "ALLOWED_COUNTRY_CODES": ["LT"],
-    "REQUIRE_KNOWN_COUNTRY": False,
+    "REQUIRE_KNOWN_COUNTRY": True,     # atmesti, jei pardavejo salies nustatyti nepavyko
+    "MIN_SELLER_RATING": 4.5,          # minimalus pardavejo ivertinimas (0-5)
+    "MIN_SELLER_REVIEWS": 3,           # minimalus atsiliepimu skaicius
     "ONLY_LITHUANIAN_TEXT": True,
     "PRICE_LAST_DIGITS": [],
     "PAGES": 3,
@@ -85,6 +87,8 @@ MODELS = _CFG["MODELS"]
 BLACKLIST_WORDS = _CFG["BLACKLIST_WORDS"]
 ALLOWED_COUNTRY_CODES = list(_CFG["ALLOWED_COUNTRY_CODES"])
 REQUIRE_KNOWN_COUNTRY = bool(_CFG["REQUIRE_KNOWN_COUNTRY"])
+MIN_SELLER_RATING = float(_CFG["MIN_SELLER_RATING"])
+MIN_SELLER_REVIEWS = int(_CFG["MIN_SELLER_REVIEWS"])
 ONLY_LITHUANIAN_TEXT = bool(_CFG["ONLY_LITHUANIAN_TEXT"])
 PRICE_LAST_DIGITS = set(_CFG["PRICE_LAST_DIGITS"])
 PAGES = int(_CFG["PAGES"])
@@ -408,125 +412,254 @@ def get_price(item):
     return None
 
 
-def get_country_code(item):
-    """Grazina pardavejo salies koda is profilio URL domeno.
-    Pvz. https://www.vinted.pl/member/... -> "PL",  vinted.fr -> "FR",
-    vinted.co.uk -> "UK". Jei nepavyksta - None.
+# --- Pardavejas: salis, miestas, reitingas -----------------------------
 
-    DEMESIO: si euristika gali neveikti, jei API visada grazina profile_url
-    su tuo paciu domenu, per kuri siunciama uzklausa (t.y. visada vinted.lt),
-    nepriklausomai nuo tikros pardavejo salies. Jei DEBUG=True, pirmam
-    skelbimui bus atspausdintas visas 'user' objektas - patikrink, ar jame
-    yra kitas laukas (pvz. country_id / country_title), kuri reiketu naudoti
-    vietoj profile_url domeno."""
+COUNTRY_NAMES = {"lietuva": "LT", "lithuania": "LT", "litauen": "LT", "lituanie": "LT",
+                 "latvija": "LV", "latvia": "LV", "polska": "PL", "poland": "PL",
+                 "france": "FR", "deutschland": "DE", "germany": "DE", "italia": "IT",
+                 "espana": "ES", "españa": "ES", "nederland": "NL", "eesti": "EE"}
+COUNTRY_LT = {"LT": "Lietuva", "LV": "Latvija", "EE": "Estija", "PL": "Lenkija", "DE": "Vokietija",
+              "FR": "Prancūzija", "IT": "Italija", "ES": "Ispanija", "NL": "Nyderlandai",
+              "BE": "Belgija", "CZ": "Čekija", "SK": "Slovakija", "AT": "Austrija",
+              "PT": "Portugalija", "UK": "JK", "GB": "JK", "FI": "Suomija", "SE": "Švedija"}
+
+_seller_cache = {}
+
+
+def _country_from_value(v):
+    if not isinstance(v, str) or not v.strip():
+        return None
+    v = v.strip()
+    if len(v) == 2 and v.isalpha():
+        return v.upper()
+    return COUNTRY_NAMES.get(v.lower())
+
+
+def _seller_from_dict(user):
+    """Is Vinted 'user' objekto istraukia {country, city, rating, reviews}."""
+    info = {}
+    for key in ("country_iso_code", "country_code", "country_title_local", "country_title"):
+        c = _country_from_value(user.get(key))
+        if c:
+            info["country"] = c
+            break
+    city = user.get("city")
+    if isinstance(city, dict):
+        city = city.get("title")
+    if isinstance(city, str) and city.strip():
+        info["city"] = city.strip()
+    try:
+        info["rating"] = round(float(user["feedback_reputation"]) * 5, 1)
+    except (KeyError, TypeError, ValueError):
+        pass
+    try:
+        info["reviews"] = int(user["feedback_count"])
+    except (KeyError, TypeError, ValueError):
+        pass
+    return info
+
+
+def _fetch_user_api(user_id):
+    """Pardavejo profilis per Vinted API (gali buti blokuojamas – tada {})."""
+    for base in (BASE, API_BASE):
+        try:
+            r = session.get(f"{base}/api/v2/users/{user_id}", headers=_headers(), timeout=20)
+            if r.status_code == 200:
+                data = r.json()
+                user = data.get("user") if isinstance(data, dict) else None
+                if isinstance(user, dict):
+                    return user
+            elif DEBUG:
+                print(f"  [DEBUG] vartotojo {user_id} API ({base}): HTTP {r.status_code}")
+        except Exception as e:
+            if DEBUG:
+                print(f"  [DEBUG] vartotojo {user_id} API klaida: {e}")
+    return {}
+
+
+def _seller_from_page(page):
+    """Atsargiai skaito skelbimo puslapi: sali imame tik jei puslapyje ji viena."""
+    info = {}
+    if not page:
+        return info
+    codes = set()
+    for key in ("country_iso_code", "country_code", "country_title_local", "country_title"):
+        for v in re.findall(r'\\?"' + key + r'\\?"\s*:\s*\\?"([^"\\]{2,40})\\?"', page):
+            c = _country_from_value(v)
+            if c:
+                codes.add(c)
+    if len(codes) == 1:
+        info["country"] = codes.pop()
+    elif DEBUG and codes:
+        print(f"  [DEBUG] puslapyje kelios salys {codes} – salis nezinoma")
+    rating = _json_value(page, "feedback_reputation")
+    count = _json_value(page, "feedback_count")
+    try:
+        info["rating"] = round(float(rating) * 5, 1)
+        info["reviews"] = int(float(count))
+    except (TypeError, ValueError):
+        pass
+    return info
+
+
+def get_seller_info(item, page):
+    """Grazina {country, city, rating, reviews} (truksta – jei nerasta).
+    Tvarka: katalogo 'user' objektas -> vartotojo API -> skelbimo puslapis."""
     global _debug_user_printed
     user = item.get("user") or {}
     if DEBUG and not _debug_user_printed:
-        print("  [DEBUG] pilnas 'user' objektas (ieskok salies lauko):")
-        print(" ", json.dumps(user, ensure_ascii=False))
+        print("  [DEBUG] katalogo 'user' objektas:", json.dumps(user, ensure_ascii=False)[:800])
         _debug_user_printed = True
-    url = user.get("profile_url") or ""
-    m = re.search(r"vinted\.([a-z.]+)/", url)
-    if not m:
-        return None
-    domain = m.group(1)          # pvz. "pl", "fr", "co.uk"
-    if domain == "co.uk":
-        return "UK"
-    return domain.upper()
+    info = _seller_from_dict(user)
+
+    user_id = user.get("id") or item.get("user_id")
+    if user_id and not all(k in info for k in ("country", "rating", "reviews")):
+        if user_id not in _seller_cache:
+            api_user = _fetch_user_api(user_id)
+            if DEBUG and api_user:
+                print("  [DEBUG] vartotojo API:", json.dumps(
+                    {k: api_user.get(k) for k in ("login", "country_iso_code", "country_code", "country_title",
+                                                   "city", "feedback_reputation", "feedback_count")},
+                    ensure_ascii=False))
+            _seller_cache[user_id] = _seller_from_dict(api_user)
+        info = {**_seller_cache[user_id], **info}
+
+    if not all(k in info for k in ("country", "rating", "reviews")):
+        info = {**_seller_from_page(page), **info}
+    return info
 
 
 # --- Kalbos aptikimas -------------------------------------------------
-# Tikslas: praleisti tik lietuviskus (arba kalbos pozymiu neturincius)
-# skelbimus, atmesti aiskiai uzsienietiskus.
+# Tikslas: praleisti TIK lietuviskus skelbimus.
+#   1. Yra lietuvisku raidziu (ąčęėįšųž) ar zodziu -> lietuviskas.
+#   2. Yra kitos kalbos raidziu ar zodziu        -> atmetamas.
+#   3. Jokiu pozymiu, bet aprasyme >= 4 "tikri" zodziai (ne modelio/techniniai)
+#      -> atmetamas (tikriausiai uzsienietiskas sakinys be lietuvisku pozymiu).
+#   4. Tik trumpas tekstas, pvz. "iPhone 14 Pro 128GB" -> praleidziamas.
 
-import re as _re
+import unicodedata
+
+
+def _fold(text):
+    """Nuima diakritikus: 'būklė' -> 'bukle'."""
+    return "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
 
 
 def _word_regex(words):
-    """Sudaro viena regex su \\b riboms is zodziu/fraziu sarasa (case jau lower)."""
-    parts = sorted((_re.escape(w) for w in words), key=len, reverse=True)
-    return _re.compile(r"\b(?:" + "|".join(parts) + r")\b")
+    parts = sorted((re.escape(w) for w in words), key=len, reverse=True)
+    return re.compile(r"\b(?:" + "|".join(parts) + r")\b")
 
 
-# Raidziu, kuriu nera lietuviu kalboje (beveik visada = lenkiska kalba)
-POLISH_ONLY_CHARS = set("łńśźżć")
-POLISH_WORDS = [
-    "sprzedam", "sprzedaje", "kupie", "telefon", "oryginalny", "oryginalne",
-    "stan", "stanie", "wysylka", "wysylke", "zestaw", "paragon", "faktura",
-    "nieuszkodzony", "uszkodzony", "ladny", "przesylka", "polecam", "okazja",
-    "komplet", "kondycja", "sprawny", "sprawna", "pudelko", "gwarancja",
-    "cena", "pekniety", "peknieta", "zbite", "zbita", "wyswietlacz",
-    "bateria", "akumulator", "dziala", "pilne", "negocjacje", "akcesoria",
+LITHUANIAN_CHARS = set("ąčęėįšųūž")
+
+# Lietuvisku zodziu SAKNYS (be diakritiku) – atpazista ir "būklė", ir "bukle",
+# ir visas galunes: parduodu/parduodamas/parduodama, baterija/baterijos...
+LITHUANIAN_STEMS = [
+    "parduod", "pardod", "parduos", "bukl", "busen", "puik", "tvarking", "veik", "kain",
+    "euru", "originalu", "originali", "idealu", "idealio", "ideali", "baterij", "irasyt",
+    "nauj", "naudot", "dekl", "defektu", "defektai", "kokybisk", "mazai", "telefonas",
+    "telefonui", "telefoną", "ekranas", "ekrano", "ekrane", "ikrov", "krovikl", "laidas", "laidu",
+    "dezut", "dezes", "talpa", "talpos", "atsiim", "siunc", "siunt", "pristat", "keic", "keist",
+    "komplekt", "pilnas", "pilnai", "brezim", "ibrez", "isbandyt", "garantij", "pirkt",
+    "labai", "gerai", "gera", "geras", "geros", "geroje", "grazus", "grazi", "funkcij",
+    "problemu", "sveikat", "skilim", "skiles", "sudauz", "nesider", "derin", "vilni", "kaun",
+    "klaiped", "siaul", "panevez", "alyt", "marijampol", "utena", "palanga", "priedas",
+    "pridedu", "pridedam", "kartu", "nieko", "jokiu", "nera", "yra", "turi", "turiu",
+    "procent", "busima", "rasykit", "rasyk", "skambin", "zinut", "kraun", "naudoj",
 ]
-_POLISH_RE = _word_regex(POLISH_WORDS)
+_LITHUANIAN_RE = re.compile(r"\b(?:" + "|".join(sorted(map(re.escape, LITHUANIAN_STEMS), key=len, reverse=True)) + r")\w*")
 
-# Raidziu, kuriu nera lietuviu kalboje, bet yra latviu
-LATVIAN_ONLY_CHARS = set("āēīōūļņģ")
+# Trumpi lietuviski zodziai, kurie saknimis butu per daug bendri
+LITHUANIAN_SHORT = _word_regex(["ir", "su", "be jokiu", "tik", "del", "nes", "arba", "kaip", "ar", "jau", "labai"])
 
-# Vokiskos raides ir dazni zodziai
-GERMAN_ONLY_CHARS = set("äöüß")
-GERMAN_WORDS = [
-    "verkaufe", "neuwertig", "versand", "zustand", "gebraucht",
-    "originalverpackung", "rechnung", "funktioniert", "einwandfrei",
-]
-_GERMAN_RE = _word_regex(GERMAN_WORDS)
+FOREIGN_WORDS = {
+    "PL": ["sprzedam", "sprzedaje", "kupie", "telefon", "oryginalny", "oryginalne",
+           "stan", "stanie", "wysylka", "wysylke", "zestaw", "paragon", "faktura",
+           "nieuszkodzony", "uszkodzony", "ladny", "przesylka", "polecam", "okazja",
+           "komplet", "kondycja", "sprawny", "sprawna", "pudelko", "gwarancja",
+           "cena", "pekniety", "peknieta", "zbite", "zbita", "wyswietlacz",
+           "bateria", "akumulator", "dziala", "pilne", "negocjacje", "akcesoria",
+           "bardzo", "dobry", "jest", "sie", "oraz"],
+    "DE": ["verkaufe", "neuwertig", "versand", "zustand", "gebraucht", "originalverpackung",
+           "rechnung", "funktioniert", "einwandfrei", "und", "mit", "ohne", "sehr", "gut",
+           "kratzer", "akku", "ist", "nicht", "keine"],
+    "EN": ["selling", "brand new", "like new", "shipping", "great condition", "condition",
+           "excellent condition", "as new", "no issues", "works perfectly", "the", "and",
+           "with", "without", "for", "comes", "battery health", "health", "unlocked",
+           "scratches", "perfect", "working", "used", "very good", "good", "fully"],
+    "FR": ["vends", "vend", "etat", "tres", "bon", "avec", "sans", "pour", "neuf", "batterie",
+           "rayure", "rayures", "fonctionne", "parfait", "chargeur", "boite", "comme", "est"],
+    "IT": ["vendo", "perfetto", "perfette", "condizioni", "batteria", "graffi", "funzionante",
+           "come", "nuovo", "con", "senza", "scatola", "ottime"],
+    "ES": ["vendo", "estado", "perfecto", "funciona", "bateria", "nuevo", "caja", "arañazos",
+           "aranazos", "sin", "muy", "bueno"],
+    "NL": ["verkoop", "staat", "goede", "nieuw", "zonder", "krassen", "doos", "werkt", "met", "een"],
+    "LV": ["stavoklis", "stavokli", "labs", "jauns", "telefons", "kaste", "bez", "pardodu telefonu"],
+    "CZ": ["prodam", "stav", "velmi", "dobry", "baterie", "krabice", "funkcni"],
+}
+_FOREIGN_RE = {lang: _word_regex([_fold(w) for w in words]) for lang, words in FOREIGN_WORDS.items()}
 
-# Dazni angliski zodziai/frazes skelbimuose
-ENGLISH_WORDS = [
-    "selling", "brand new", "like new", "shipping", "great condition",
-    "excellent condition", "as new", "no issues", "works perfectly",
-]
-_ENGLISH_RE = _word_regex(ENGLISH_WORDS)
+FOREIGN_CHARS = {
+    "PL": set("łńśźżć"),
+    "DE": set("äöüß"),
+    "LV": set("āēīōļņģ"),      # 'ū' nera cia – ji yra ir lietuviu kalboje
+    "FR": set("éèêàçôœ"),
+    "ES": set("ñ¿¡"),
+    "CZ": set("řěůť"),
+}
 
-# Lietuviski pozymiai – jei jie yra, skelbimas laikomas lietuvisku
-# (net jei atsitiktinai atsirado viena "uzsienietiska" raide).
-LITHUANIAN_WORDS = [
-    "parduodu", "pardodu", "parduosiu", "bukle", "puiki", "puikus", "puikioje",
-    "gera", "geras", "geros", "tvarkingas", "tvarkinga", "veikia", "kaina",
-    "euru", "originalus", "originali", "idealios", "baterija", "irasyta",
-    "naujas", "nauja", "naudotas", "naudota", "su deklu", "deklas pridedamas",
-    "be defektu", "be jokiu defektu", "kokybiskas", "mazai naudotas",
-]
-_LITHUANIAN_RE = _word_regex(LITHUANIAN_WORDS)
+# Zodziai, kurie nieko nesako apie kalba (modeliai, techniniai terminai)
+NEUTRAL_WORDS = set("""
+iphone apple pro max plus mini gb tb gen generation se ios airpods watch ipad macbook
+unlocked icloud face id truedepth esim sim dual black white blue gold silver graphite
+sierra alpine green purple deep space midnight starlight red pink natural titanium
+""".split())
 
 
 def _has_cyrillic(text):
-    return any("\u0400" <= ch <= "\u04ff" for ch in text)
+    return any("Ѐ" <= ch <= "ӿ" for ch in text)
 
 
 def detect_foreign_language(*texts):
-    """Grazina 'PL' / 'LV' / 'DE' / 'RU' / 'EN' jei tekstas atrodo parasytas ne
-    lietuviskai, arba None jei atrodo lietuviskas arba kalbos nustatyti
-    negalima (per mazai teksto / vien modelio pavadinimas).
+    """Grazina kalbos koda ('PL', 'EN', 'FR', ..., '??'), jei tekstas ne lietuviskas,
+    arba None, jei lietuviskas / per mazai teksto nustatyti.
 
-    Sie zodziu sarasai sudaryti is zodziu, kuriu praktiskai nepasitaiko
-    lietuviu kalboje, tad UZTENKA VIENO atitikimo (naudojant \\b zodzio
-    ribas, kad neuzkabintu dalies kito zodzio)."""
-    t = " ".join(x for x in texts if x).lower()
-    if not t:
+    Skaiciuojami taskai: lietuviski pozymiai (raides, zodziu saknys – su
+    diakritikais ir be) pries kitu kalbu pozymius. Laimi daugiau tasku."""
+    raw = " ".join(x for x in texts if x).lower()
+    if not raw.strip():
         return None
+    folded = _fold(raw)
 
-    # Jei yra aiskiu lietuvisku pozymiu – laikome lietuvisku (nepriklausomai
-    # nuo atsitiktiniu raidziu). Tai apsaugo nuo klaidingu atmetimu, kai
-    # aprasyme nera "tikru" lietuvisku raidziu, pvz. parasyta svelnai.
-    if _LITHUANIAN_RE.search(t):
-        return None
-
-    if _has_cyrillic(t):
+    if _has_cyrillic(raw):
         return "RU"
 
-    if (sum(1 for ch in t if ch in POLISH_ONLY_CHARS) >= 1) or _POLISH_RE.search(t):
-        return "PL"
+    lt_score = 2 * len(LITHUANIAN_CHARS & set(raw))
+    lt_score += 2 * len(set(_LITHUANIAN_RE.findall(folded)))
+    lt_score += len(set(LITHUANIAN_SHORT.findall(folded)))
 
-    if (sum(1 for ch in t if ch in GERMAN_ONLY_CHARS) >= 1) or _GERMAN_RE.search(t):
-        return "DE"
+    foreign = {}
+    for lang, chars in FOREIGN_CHARS.items():
+        n = len(chars & set(raw))
+        if n:
+            foreign[lang] = foreign.get(lang, 0) + 2 * n
+    for lang, rx in _FOREIGN_RE.items():
+        n = len(set(rx.findall(folded)))
+        if n:
+            foreign[lang] = foreign.get(lang, 0) + 2 * n
+    best_lang, best_score = max(foreign.items(), key=lambda kv: kv[1]) if foreign else (None, 0)
 
-    if sum(1 for ch in t if ch in LATVIAN_ONLY_CHARS) >= 1:
-        return "LV"
+    if DEBUG:
+        print(f"  [DEBUG] kalba: LT={lt_score}, kitos={foreign}")
 
-    if _ENGLISH_RE.search(t):
-        return "EN"
+    if lt_score > 0 and lt_score >= best_score:
+        return None
+    if best_lang:
+        return best_lang
 
+    words = [w for w in re.findall(r"[a-z]{3,}", folded) if w not in NEUTRAL_WORDS]
+    if len(set(words)) >= 4:
+        return "??"
     return None
 
 
@@ -557,35 +690,71 @@ def get_photo_url(item, og):
     return og.get("image")
 
 
-def get_condition(item, page):
-    """Bukle, pvz. "Labai gera"."""
+# Vinted bukles (status_id -> lietuviskas pavadinimas)
+CONDITION_LT = {6: "Nauja su etiketėmis", 1: "Nauja be etikečių", 2: "Labai gera", 3: "Gera", 4: "Patenkinama"}
+
+# Bukles pavadinimai kitomis kalbomis (be diakritiku, mazosiomis) -> status_id
+CONDITION_FOREIGN = {
+    # FR
+    "neuf avec etiquette": 6, "neuf sans etiquette": 1, "tres bon etat": 2, "bon etat": 3, "satisfaisant": 4,
+    # EN
+    "new with tags": 6, "new without tags": 1, "very good": 2, "good": 3, "satisfactory": 4,
+    # DE
+    "neu mit etikett": 6, "neu ohne etikett": 1, "sehr gut": 2, "gut": 3, "zufriedenstellend": 4,
+    # PL
+    "nowy z metka": 6, "nowy bez metki": 1, "bardzo dobry": 2, "dobry": 3, "zadowalajacy": 4,
+    # IT
+    "nuovo con cartellino": 6, "nuovo senza cartellino": 1, "ottime condizioni": 2,
+    "buone condizioni": 3, "discrete condizioni": 4,
+    # ES
+    "nuevo con etiquetas": 6, "nuevo sin etiquetas": 1, "muy bueno": 2, "bueno": 3, "satisfactorio": 4,
+    # NL
+    "nieuw met prijskaartje": 6, "nieuw zonder prijskaartje": 1, "heel goed": 2, "goed": 3, "redelijk": 4,
+    # LV
+    "jauns ar birkam": 6, "jauns bez birkam": 1, "loti labs": 2, "labs": 3, "apmierinoss": 4,
+    # CZ
+    "nove s visackou": 6, "nove bez visacky": 1, "velmi dobry": 2, "dobry": 3, "uspokojivy": 4,
+}
+_LT_CONDITIONS = {_fold(v.lower()): k for k, v in CONDITION_LT.items()}
+
+
+def _raw_condition(item, page):
+    status_id = item.get("status_id")
+    if isinstance(item.get("status"), dict):
+        status_id = status_id or item["status"].get("id")
+    try:
+        if int(status_id) in CONDITION_LT:
+            return None, int(status_id)
+    except (TypeError, ValueError):
+        pass
     status = item.get("status")
     if isinstance(status, dict):
         status = status.get("title")
     if isinstance(status, str) and status.strip():
-        return status.strip()
+        return status.strip(), None
     second = (item.get("item_box") or {}).get("second_line") or ""
     if second:
-        return second.split("·")[-1].strip()
-    for cond in ("Nauja su etiketėmis", "Nauja be etikečių", "Labai gera", "Gera", "Patenkinama"):
+        return second.split("·")[-1].strip(), None
+    for cond in CONDITION_LT.values():
         if page and ('"' + cond + '\\"' in page or '"' + cond + '"' in page):
-            return cond
-    return None
+            return cond, None
+    return None, None
 
 
-def get_seller_rating(item, page):
-    """Grazina (ivertinimas 0-5, atsiliepimu skaicius) arba (None, None)."""
-    user = item.get("user") or {}
-    rep_ = user.get("feedback_reputation")
-    cnt = user.get("feedback_count")
-    if rep_ is None and page:
-        rep_ = _json_value(page, "feedback_reputation")
-    if cnt is None and page:
-        cnt = _json_value(page, "feedback_count")
-    try:
-        return round(float(rep_) * 5, 1), int(float(cnt))
-    except (TypeError, ValueError):
-        return None, None
+def get_condition(item, page):
+    """Grazina (bukle lietuviskai, ar_bukle_buvo_uzsienio_kalba).
+    Pvz. "Très bon état" -> ("Labai gera", True)."""
+    text, status_id = _raw_condition(item, page)
+    if status_id:
+        return CONDITION_LT[status_id], False
+    if not text:
+        return None, False
+    key = _fold(text.lower()).strip()
+    if key in _LT_CONDITIONS:
+        return CONDITION_LT[_LT_CONDITIONS[key]], False
+    if key in CONDITION_FOREIGN:
+        return CONDITION_LT[CONDITION_FOREIGN[key]], True
+    return text, False
 
 
 def _stars(score):
@@ -610,6 +779,11 @@ def format_card(a):
     score, count = a.get("rating", (None, None))
     if score is not None:
         lines.append(f"⭐ <b>Pardavėjas:</b> {_stars(score)} ({score:.1f}/5, {count} atsiliep.)")
+    if a.get("country"):
+        place = COUNTRY_LT.get(a["country"], a["country"])
+        if a.get("city"):
+            place += ", " + a["city"]
+        lines.append(f"📍 <b>Vieta:</b> {html.escape(place)}")
     lines.append(f'🔗 <a href="{html.escape(a["url"])}">Atidaryti Vinted</a>')
     return "\n".join(lines)[:1024]
 
@@ -658,7 +832,9 @@ def main():
     new_seen = dict(seen) # <-- IŠTAISYTA ČIA
     alerts = []
     total_fetched = 0
-    
+    unknown_country = 0
+    checked_sellers = 0
+
     for model in MODELS:
         q = model["query"]
         print(f"Tikrinama: '{q}' ({model['min_price']}-{model['max_price']} EUR)...")
@@ -668,6 +844,7 @@ def main():
         excluded_by_country = 0
         excluded_foreign = 0
         excluded_price_digit = 0
+        excluded_seller = 0
 
         for item in items:
             if not isinstance(item, dict):
@@ -702,9 +879,25 @@ def main():
             description = og.get("description") or ""
             page_html = og.get("_html", "")
 
-            # OG zymos salies neduoda, tad sita liekam prie kataloginio
-            # (nors, kaip aptikta, jis, atrodo, visada rodo LT).
-            country = get_country_code(item)
+            condition, condition_foreign = get_condition(item, page_html)
+
+            if ONLY_LITHUANIAN_TEXT:
+                # Bukle Vinted rodo pardavejo kalba – "Très bon état" = ne Lietuvos skelbimas
+                lang = "bukle" if condition_foreign else detect_foreign_language(title, description)
+                if lang:
+                    excluded_foreign += 1
+                    if DEBUG:
+                        print(f"  [DEBUG] atmesta (kalba={lang}): {title[:60]}")
+                    continue
+
+            if is_junk(title):
+                continue
+
+            # Pardavejas: salis ir patikimumas (tikrinama paskutini – brangiausia)
+            seller = get_seller_info(item, page_html)
+            country = seller.get("country")
+            if country is None:
+                unknown_country += 1
             country_ok = (country in ALLOWED_COUNTRY_CODES) if country else (not REQUIRE_KNOWN_COUNTRY)
             if not country_ok:
                 excluded_by_country += 1
@@ -712,15 +905,12 @@ def main():
                     print(f"  [DEBUG] atmesta (salis={country}): {title[:60]}")
                 continue
 
-            if ONLY_LITHUANIAN_TEXT:
-                lang = detect_foreign_language(title, description)
-                if lang:
-                    excluded_foreign += 1
-                    if DEBUG:
-                        print(f"  [DEBUG] atmesta (kalba={lang}, salis={country}): {title[:60]}")
-                    continue
-
-            if is_junk(title):
+            rating, reviews = seller.get("rating"), seller.get("reviews")
+            if (rating is None or reviews is None or rating < MIN_SELLER_RATING
+                    or reviews < MIN_SELLER_REVIEWS):
+                excluded_seller += 1
+                if DEBUG:
+                    print(f"  [DEBUG] atmesta (pardavejas {rating}/5, {reviews} atsil.): {title[:60]}")
                 continue
 
             alerts.append({
@@ -730,14 +920,17 @@ def main():
                 "url": full_url,
                 "description": description,
                 "photo": get_photo_url(item, og),
-                "condition": get_condition(item, page_html),
-                "rating": get_seller_rating(item, page_html),
+                "condition": condition,
+                "rating": (rating, reviews),
+                "country": country,
+                "city": seller.get("city"),
             })
             fresh += 1
+            checked_sellers += 1
             if DEBUG:
-                print(f"  [DEBUG] PRIIMTA (salis={country}): {title[:60]}")
+                print(f"  [DEBUG] PRIIMTA (salis={country}, {rating}/5): {title[:60]}")
 
-        print(f"  Gauta: {len(items)}, tinkama: {fresh}, atmesta salis: {excluded_by_country}, atmesta uzsienio kalba: {excluded_foreign}, atmesta kainos skaitmuo: {excluded_price_digit}")
+        print(f"  Gauta: {len(items)}, tinkama: {fresh}, atmesta salis: {excluded_by_country}, atmesta uzsienio kalba: {excluded_foreign}, atmesta kainos skaitmuo: {excluded_price_digit}, atmesta pardavejas: {excluded_seller}")
         time.sleep(SLEEP_SECONDS)
 
     # Rusiuojame visus alertus pagal kaina (nuo maziausios)
@@ -751,6 +944,13 @@ def main():
         send_telegram("<b>ISPEJIMAS</b>: negauta nei vieno skelbimo is Vinted. "
                       "Galimai pasikeite API – patikrink skripto logus.\n"
                       "Priezastis: <code>" + html.escape(last_error or "nezinoma") + "</code>")
+
+    # Diagnostika: jei nei vienam pardavejui salies nustatyti nepavyko – pranesam
+    if REQUIRE_KNOWN_COUNTRY and unknown_country and not checked_sellers:
+        print(f"! {unknown_country} pardaveju salies nustatyti nepavyko – visi atmesti.")
+        send_telegram("<b>ISPEJIMAS</b>: nepavyko nustatyti pardaveju salies "
+                      f"({unknown_country} skelb.), todel visi atmesti.\n"
+                      "Ijunk DEBUG: true faile config.json ir atsiusk log'a.")
 
     if not alerts:
         print("Nauju deal'u nera.")
