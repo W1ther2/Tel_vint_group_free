@@ -5,9 +5,14 @@
   ],
 
   "MIN_DISCOUNT": 0.15,
-  "HARD_MIN_PRICE_RATIO": 0.15,
+  "HARD_MIN_PRICE_RATIO": 0.40,
   "SUSPICIOUS_PRICE_RATIO": 0.55,
   "MIN_BATTERY": 0,
+  "MODEL_MIN_PRICES": {},
+
+  "TIDY_ONLY": true,
+  "MIN_CONDITION": "Gera",
+  "ALLOWED_DEFECTS": ["įbrėžimai"],
 
   "MARKET_PRICES": {
     "13": 180

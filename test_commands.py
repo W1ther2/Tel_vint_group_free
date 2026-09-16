@@ -1,0 +1,48 @@
+import unittest
+
+from tests.helpers import reset_config
+from vinted import config, commands
+from vinted.state import State
+
+
+class CommandsTest(unittest.TestCase):
+    def setUp(self):
+        reset_config(MARKET_PRICES={"14": 300})
+        self.state = State()
+
+    def test_price(self):
+        self.assertIn("iPhone 13: rinkos kaina 180", commands.handle("/kaina 13 180", self.state))
+        self.assertEqual(config.market_prices()["13"], 180)
+        self.assertIn("iPhone 13 Pro Max 256 GB", commands.handle("/kaina@VintBot 13 pro max 256 390", self.state))
+        self.assertEqual(config.market_prices()["13 Pro Max|256 GB"], 390)
+        self.assertEqual(config.market_prices()["14"], 300)          # config.json kaina islieka
+        commands.handle("/kaina 13 trinti", self.state)
+        self.assertNotIn("13", config.market_prices())
+        self.assertIn("Nežinomas modelis", commands.handle("/kaina 7 100", self.state))
+
+    def test_overrides_survive_reload(self):
+        commands.handle("/kaina 13 180", self.state)
+        commands.handle("/nuolaida 20", self.state)
+        reset_config()
+        config.apply_overrides(State(self.state.__dict__ | {"market": None}).overrides)
+        self.assertEqual(config.cfg["MIN_DISCOUNT"], 0.20)
+        self.assertEqual(config.market_prices(), {"13": 180})
+
+    def test_settings(self):
+        commands.handle("/baterija 80", self.state)
+        commands.handle("/garsas 35", self.state)
+        commands.handle("/pauze", self.state)
+        self.assertEqual((config.cfg["MIN_BATTERY"], config.cfg["LOUD_DISCOUNT"], config.cfg["PAUSED"]),
+                         (80, 0.35, True))
+        self.assertIn("Pauzė: taip", commands.handle("/nustatymai", self.state))
+        commands.handle("/testi", self.state)
+        self.assertFalse(config.cfg["PAUSED"])
+
+    def test_bad_input(self):
+        self.assertIn("Neteisinga", commands.handle("/nuolaida daug", self.state))
+        self.assertIsNone(commands.handle("/nezinoma", self.state))
+        self.assertIn("/kaina", commands.handle("/pagalba", self.state))
+
+
+if __name__ == "__main__":
+    unittest.main()
