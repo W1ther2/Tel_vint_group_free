@@ -1,0 +1,83 @@
+import unittest
+
+from tests.helpers import reset_config
+from vinted.phone import (detect_model, is_accessory, find_defects, extract_storage, extract_battery,
+                          estimate_value, estimate_profit, normalize_model_name, normalize_storage)
+
+
+class ModelTest(unittest.TestCase):
+    def setUp(self):
+        reset_config()
+
+    def test_models(self):
+        cases = {
+            "iPhone 13 Pro Max 256GB": "13 Pro Max", "Apple iPhone13ProMax": "13 Pro Max",
+            "iPhone 8 Plus": "8 Plus", "iPhone 8+": "8 Plus", "iPhone X 64gb": "X",
+            "iPhone XS Max": "XS Max", "iphone xr": "XR", "IPHONE 14PRO": "14 Pro",
+            "iPhone 12 mini": "12 mini", "iPhone 16e": "16e", "iPhone Air 256": "Air",
+            "iPhone 17 Pro Max": "17 Pro Max", "i phone 14": "14", "iPhone 13 max": "13 Pro Max",
+        }
+        for title, expected in cases.items():
+            self.assertEqual(detect_model(title), expected, title)
+
+    def test_not_models(self):
+        for title in ["iPhone 7", "iPhone SE 2020", "iPhone 18 Pro", "Samsung S21", "iPhone 12 / iPhone 13"]:
+            self.assertIsNone(detect_model(title), title)
+
+    def test_normalize(self):
+        self.assertEqual(normalize_model_name("13 pro max"), "13 Pro Max")
+        self.assertEqual(normalize_model_name("xs max"), "XS Max")
+        self.assertEqual(normalize_storage("256gb"), "256 GB")
+        self.assertEqual(normalize_storage("1tb"), "1 TB")
+        self.assertIsNone(normalize_storage("180"))
+
+    def test_accessory(self):
+        self.assertTrue(is_accessory("Dėklas iPhone 13"))
+        self.assertTrue(is_accessory("Case for iPhone 14 Pro"))
+        self.assertTrue(is_accessory("Silikoninis dėklas skirtas iPhone 15"))
+        self.assertFalse(is_accessory("iPhone 13 su dėklu ir dėžute"))
+        self.assertFalse(is_accessory("iPhone 13 128GB + box"))
+
+
+class DefectTest(unittest.TestCase):
+    def labels(self, text):
+        return [label for label, _ in find_defects(text)]
+
+    def test_negations_ignored(self):
+        for text in ["be įbrėžimų ir įskilimų", "jokių defektų ar įbrėžimų, viskas veikia", "iCloud atrištas",
+                     "Telefonas iššilaikęs gerai, nesudaužytas ir nesubraižytas", "nėra jokių įbrėžimų ar įskilimų",
+                     "no cracks, works perfectly"]:
+            self.assertEqual(self.labels(text), [], text)
+
+    def test_defects_found(self):
+        self.assertEqual(self.labels("ekranas įskilęs, bet veikia"), ["skilęs"])
+        self.assertEqual(self.labels("nėra įbrėžimų, bet yra įskilimas kampe"), ["skilęs"])
+        self.assertEqual(self.labels("Face ID neveikia"), ["neveikia Face ID"])
+        self.assertIn("iCloud užraktas", self.labels("for parts, icloud locked"))
+
+    def test_fatal_defects_zero(self):
+        self.assertTrue(any(f == 0 for _, f in find_defects("iCloud užblokuotas")))
+
+
+class SpecsTest(unittest.TestCase):
+    def setUp(self):
+        reset_config()
+
+    def test_storage_battery(self):
+        self.assertEqual(extract_storage("iPhone 13 128GB"), "128 GB")
+        self.assertEqual(extract_storage("1TB"), "1 TB")
+        self.assertEqual(extract_battery("baterija 87%"), 87)
+        self.assertEqual(extract_battery("Baterijos talpa: 88 %"), 88)
+        self.assertEqual(extract_battery("85% battery"), 85)
+        self.assertIsNone(extract_battery("nuolaida 20%"))
+
+    def test_value_and_profit(self):
+        self.assertAlmostEqual(estimate_value(200, "Labai gera", 92, []), 200)
+        self.assertAlmostEqual(estimate_value(200, "Gera", 92, [("skilęs", 0.7)]), 200 * 0.92 * 0.7)
+        # 150 + 0.70 + 7.50 + 3.50 = 161.70
+        self.assertAlmostEqual(estimate_profit(150, 200), 200 - 161.70)
+        self.assertAlmostEqual(estimate_profit(150, 200, pickup_only=True), 200 - 158.20)
+
+
+if __name__ == "__main__":
+    unittest.main()
