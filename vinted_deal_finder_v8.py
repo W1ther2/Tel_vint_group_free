@@ -846,6 +846,7 @@ def main():
         excluded_price_digit = 0
         excluded_seller = 0
         excluded_price = 0
+        already_seen = 0
         excluded_junk = 0
         page_failed = 0
         examples = []                      # keli atmestu skelbimu pavyzdziai log'ui
@@ -858,6 +859,7 @@ def main():
                 continue
             item_id = str(item_id)
             if item_id in seen:
+                already_seen += 1
                 continue
             new_seen[item_id] = time.time()
 
@@ -943,7 +945,7 @@ def main():
             if DEBUG:
                 print(f"  [DEBUG] PRIIMTA (salis={country}, {rating}/5): {title[:60]}")
 
-        print(f"  Gauta: {len(items)}, tinkama: {fresh}, atmesta salis: {excluded_by_country}, atmesta uzsienio kalba: {excluded_foreign}, atmesta kainos skaitmuo: {excluded_price_digit}, atmesta pardavejas: {excluded_seller}, "
+        print(f"  Gauta: {len(items)}, jau matyti: {already_seen}, nauji: {len(items) - already_seen}, tinkama: {fresh}, atmesta salis: {excluded_by_country}, atmesta uzsienio kalba: {excluded_foreign}, atmesta kainos skaitmuo: {excluded_price_digit}, atmesta pardavejas: {excluded_seller}, "
               f"ne kainos ribose: {excluded_price}, slamstas: {excluded_junk}, "
               f"skelbimo puslapis nepasiekiamas: {page_failed}")
         for ex in examples:
