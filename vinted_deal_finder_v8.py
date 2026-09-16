@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Vinted deal finder v10 — naujas Vinted katalogo API adresas (api.vinted.lt/svc-catalogue).
+Vinted deal finder v11 — Telegram korteles su nuotrauka, bukle ir pardavejo reitingu.
 
 Filtrai, Telegram zinuciu ir log'u isvaizda – tokie patys kaip v8.
 Pakeista tik tai, kaip gaunami skelbimai is Vinted:
@@ -330,7 +330,7 @@ def _parse_og_tags(html_text):
     return og
 
 
-def fetch_item_page_og(item_id, url_path, max_bytes=200_000):
+def fetch_item_page_og(item_id, url_path, max_bytes=3_000_000):
     """Katalogo/paieskos API skelbimo objekte NERA aprasymo, o atskiras JSON
     endpoint'as (/api/v2/items/{id}) Vinted DAZNIAUSIAI BLOKUOJA (403, anti-bot
     apsauga - tai patvirtinta ir populiariuose atviro kodo Vinted scraper'iuose).
@@ -353,9 +353,10 @@ def fetch_item_page_og(item_id, url_path, max_bytes=200_000):
             return {}
         html_text = resp.text[:max_bytes]
         og = _parse_og_tags(html_text)
+        og["_html"] = html_text          # pilnas puslapis – bukle ir pardavejo reitingui
         if DEBUG and not _debug_og_printed:
             print(f"  [DEBUG] skelbimo {item_id} OG duomenys (is puslapio <head>):")
-            print(" ", json.dumps(og, ensure_ascii=False))
+            print(" ", json.dumps({k: v for k, v in og.items() if k != "_html"}, ensure_ascii=False))
             _debug_og_printed = True
         return og
     except Exception as e:
@@ -534,6 +535,106 @@ def is_junk(title):
     return any(w in t for w in BLACKLIST_WORDS)
 
 
+# --- Papildoma informacija Telegram kortelei ---------------------------
+
+def _json_value(page, key):
+    """Randa "key": reiksme skelbimo puslapio JSON'e (ir su \\" kabutemis)."""
+    m = re.search(r'\\?"' + re.escape(key) + r'\\?"\s*:\s*(\\?"(.*?)\\?"|-?[\d.]+)', page)
+    if not m:
+        return None
+    return m.group(2) if m.group(2) is not None else m.group(1)
+
+
+def get_photo_url(item, og):
+    photo = item.get("photo") or {}
+    if isinstance(photo, dict):
+        url = photo.get("url") or photo.get("full_size_url")
+        if url:
+            return url
+    photos = item.get("photos") or []
+    if photos and isinstance(photos[0], dict) and photos[0].get("url"):
+        return photos[0]["url"]
+    return og.get("image")
+
+
+def get_condition(item, page):
+    """Bukle, pvz. "Labai gera"."""
+    status = item.get("status")
+    if isinstance(status, dict):
+        status = status.get("title")
+    if isinstance(status, str) and status.strip():
+        return status.strip()
+    second = (item.get("item_box") or {}).get("second_line") or ""
+    if second:
+        return second.split("·")[-1].strip()
+    for cond in ("Nauja su etiketėmis", "Nauja be etikečių", "Labai gera", "Gera", "Patenkinama"):
+        if page and ('"' + cond + '\\"' in page or '"' + cond + '"' in page):
+            return cond
+    return None
+
+
+def get_seller_rating(item, page):
+    """Grazina (ivertinimas 0-5, atsiliepimu skaicius) arba (None, None)."""
+    user = item.get("user") or {}
+    rep_ = user.get("feedback_reputation")
+    cnt = user.get("feedback_count")
+    if rep_ is None and page:
+        rep_ = _json_value(page, "feedback_reputation")
+    if cnt is None and page:
+        cnt = _json_value(page, "feedback_count")
+    try:
+        return round(float(rep_) * 5, 1), int(float(cnt))
+    except (TypeError, ValueError):
+        return None, None
+
+
+def _stars(score):
+    full = int(round(score or 0))
+    return "★" * full + "☆" * (5 - full)
+
+
+def format_card(a):
+    """Telegram korteles tekstas (HTML, iki 1024 simboliu – nuotraukos aprasymo riba)."""
+    lines = [
+        f"<b>{html.escape(a['title'])} | {a['price']:g} €</b>",
+        f"<i>(paieška: {html.escape(a['query'])})</i>",
+    ]
+    desc = re.sub(r"\s+", " ", a.get("description") or "").strip()
+    if len(desc) > 180:
+        desc = desc[:180].rsplit(" ", 1)[0] + " ..."
+    if desc:
+        lines.append(html.escape(desc))
+    lines.append("")
+    if a.get("condition"):
+        lines.append(f"📦 <b>Būklė:</b> {html.escape(a['condition'])}")
+    score, count = a.get("rating", (None, None))
+    if score is not None:
+        lines.append(f"⭐ <b>Pardavėjas:</b> {_stars(score)} ({score:.1f}/5, {count} atsiliep.)")
+    lines.append(f'🔗 <a href="{html.escape(a["url"])}">Atidaryti Vinted</a>')
+    return "\n".join(lines)[:1024]
+
+
+def send_deal(a):
+    """Siuncia skelbima kaip kortele su nuotrauka ir mygtuku. Jei nuotrauka
+    nesiuncia – siuncia paprasta teksta."""
+    caption = format_card(a)
+    keyboard = json.dumps({"inline_keyboard": [[{"text": "🛒 Atidaryti Vinted", "url": a["url"]}]]})
+    if a.get("photo"):
+        try:
+            r = requests.post(
+                "https://api.telegram.org/bot" + BOT_TOKEN + "/sendPhoto",
+                data={"chat_id": CHAT_ID, "photo": a["photo"], "caption": caption,
+                      "parse_mode": "HTML", "reply_markup": keyboard},
+                timeout=20,
+            )
+            if r.status_code == 200:
+                return
+            print(f"  ! Telegram nuotraukos klaida: {r.text[:150]} – siunciu be nuotraukos")
+        except Exception as e:
+            print(f"  ! Nepavyko issiusti nuotraukos: {e} – siunciu be nuotraukos")
+    send_telegram(caption)
+
+
 def send_telegram(text):
     url = "https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML",
@@ -599,6 +700,7 @@ def main():
             if og.get("title"):
                 title = og["title"]
             description = og.get("description") or ""
+            page_html = og.get("_html", "")
 
             # OG zymos salies neduoda, tad sita liekam prie kataloginio
             # (nors, kaip aptikta, jis, atrodo, visada rodo LT).
@@ -621,7 +723,16 @@ def main():
             if is_junk(title):
                 continue
 
-            alerts.append((q, title, price, full_url))
+            alerts.append({
+                "query": q,
+                "title": item.get("title") or title,
+                "price": price,
+                "url": full_url,
+                "description": description,
+                "photo": get_photo_url(item, og),
+                "condition": get_condition(item, page_html),
+                "rating": get_seller_rating(item, page_html),
+            })
             fresh += 1
             if DEBUG:
                 print(f"  [DEBUG] PRIIMTA (salis={country}): {title[:60]}")
@@ -630,7 +741,7 @@ def main():
         time.sleep(SLEEP_SECONDS)
 
     # Rusiuojame visus alertus pagal kaina (nuo maziausios)
-    alerts.sort(key=lambda a: a[2])
+    alerts.sort(key=lambda a: a["price"])
 
     save_seen(new_seen)
 
@@ -650,11 +761,10 @@ def main():
         print("[DRY_RUN] Pakeisk DRY_RUN = False ir paleisk dar karta.")
         return
 
-    for q, title, price, full_url in alerts:
-        msg = ("<b>" + html.escape(q) + "</b> - " + str(round(price)) + " EUR\n"
-               + html.escape(title) + "\n" + full_url)
-        send_telegram(msg)
-        print(f"  -> {q} {price:.0f} EUR: {title[:50]}")
+    for a in alerts:
+        send_deal(a)
+        print(f"  -> {a['query']} {a['price']:.0f} EUR: {a['title'][:50]}")
+        time.sleep(1)                     # Telegram riboja zinuciu greiti
 
     print(f"Issiusta {len(alerts)} alert'u.")
 
