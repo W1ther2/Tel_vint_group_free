@@ -307,6 +307,21 @@ def fetch_page_with_retry(query, page):
     return None
 
 
+def _looks_newest_first(batch):
+    """Vinted skelbimu ID didėja laikui bėgant. Jei bent 80% gretimu porų ID mažėja –
+    sąrašas tikrai surikiuotas nuo naujausių ir stabdyti puslapiavimą saugu."""
+    ids = []
+    for b in batch:
+        try:
+            ids.append(int(b.get("id")))
+        except (TypeError, ValueError, AttributeError):
+            return False
+    if len(ids) < 5:
+        return True
+    desc = sum(1 for x, y in zip(ids, ids[1:]) if x > y)
+    return desc / (len(ids) - 1) >= 0.8
+
+
 def fetch_items(query, pages, seen=None):
     """Skelbimai rikiuojami nuo naujausiu, tad jei VISI puslapio skelbimai jau
     matyti – toliau nebeverta ziureti (sutaupo daug laiko)."""
@@ -318,9 +333,15 @@ def fetch_items(query, pages, seen=None):
         if not batch:          # daugiau nera – stabdome puslapiavima
             break
         items.extend(batch)
+        if page == 1:
+            ids = [b.get("id") for b in batch[:3] if isinstance(b, dict)]
+            print(f"  p.1: {len(batch)} skelb., naujausi ID: {ids}, "
+                  f"rikiuota nuo naujausiu: {'taip' if _looks_newest_first(batch) else 'NE'}")
         if seen and all(isinstance(b, dict) and str(b.get("id")) in seen for b in batch):
-            print(f"  p.{page}: visi skelbimai jau matyti – toliau nebetikrinu")
-            break
+            if _looks_newest_first(batch):
+                print(f"  p.{page}: visi skelbimai jau matyti – toliau nebetikrinu")
+                break
+            print(f"  p.{page}: visi matyti, bet API nerikiuoja nuo naujausiu – tikrinu toliau")
         if page < pages:
             time.sleep(SLEEP_SECONDS)
     return items
