@@ -46,8 +46,8 @@ DEFAULTS = {
         "hulle", "folija", "grudintas",
     ],
     "ALLOWED_COUNTRY_CODES": ["LT"],
-    "FILTER_BY_COUNTRY": False,        # False = salis netikrinama, filtruojama tik pagal aprasymo kalba
-    "REQUIRE_KNOWN_COUNTRY": False,    # (tik kai FILTER_BY_COUNTRY) atmesti, jei salis nezinoma
+    "FILTER_BY_COUNTRY": True,         # atmesti pardavejus ne is ALLOWED_COUNTRY_CODES
+    "REQUIRE_KNOWN_COUNTRY": False,    # True = atmesti ir tuos, kuriu salies nepavyko nustatyti
     "MIN_SELLER_RATING": 4.5,          # minimalus pardavejo ivertinimas (0-5)
     "MIN_SELLER_REVIEWS": 3,           # minimalus atsiliepimu skaicius
     "ONLY_LITHUANIAN_TEXT": True,      # kalbos filtras ijungtas
@@ -132,6 +132,11 @@ def _headers(json_api=True):
     if USING_CFFI:
         h.pop("User-Agent")          # curl_cffi pats nustato tikra Chrome User-Agent
     if json_api:
+        # BE SITU api.vinted.lt nezino rinkos: grazina skelbimus is viso pasaulio
+        # (ir JAV), bukles prancuziskai, kainas doleriais. Locale = Lietuvos rinka.
+        h["Locale"] = "lt-LT"
+        h["X-Next-App"] = "marketplace-web"
+        h["Platform"] = "web"
         if _auth["anon_id"]:
             h["X-Anon-Id"] = _auth["anon_id"]
         if _auth["csrf"]:
@@ -232,7 +237,8 @@ def _request_catalog(url, query, page, max_retries=3):
     - 5xx / tinklo klaida -> backoff ir bando dar karta
     Grazina items sarasa, tuscia sarasa, "404" arba None (viskas zlugo)."""
     global last_error, _debug_item_printed
-    params = {"search_text": query, "order": "newest_first", "per_page": 96, "page": page}
+    params = {"search_text": query, "order": "newest_first", "per_page": 96, "page": page,
+              "currency": "EUR"}
     short_url = url.split("//", 1)[-1]
     for attempt in range(1, max_retries + 1):
         try:
@@ -397,6 +403,8 @@ def get_price(item):
     - atsarginiai laukai price_amount / amount / total_item_price"""
     global _debug_price_printed
     p = item.get("price")
+    if isinstance(p, dict) and p.get("currency_code") not in (None, "", "EUR"):
+        return None                        # ne euro kaina = ne Lietuvos rinka
     if DEBUG and not _debug_price_printed:
         print(f"  [DEBUG] price: {repr(p)}")
         _debug_price_printed = True
@@ -431,7 +439,9 @@ COUNTRY_NAMES = {"lietuva": "LT", "lithuania": "LT", "litauen": "LT", "lituanie"
 COUNTRY_LT = {"LT": "Lietuva", "LV": "Latvija", "EE": "Estija", "PL": "Lenkija", "DE": "Vokietija",
               "FR": "Prancūzija", "IT": "Italija", "ES": "Ispanija", "NL": "Nyderlandai",
               "BE": "Belgija", "CZ": "Čekija", "SK": "Slovakija", "AT": "Austrija",
-              "PT": "Portugalija", "UK": "JK", "GB": "JK", "FI": "Suomija", "SE": "Švedija"}
+              "PT": "Portugalija", "UK": "JK", "GB": "JK", "FI": "Suomija", "SE": "Švedija",
+              "US": "JAV", "CA": "Kanada", "IE": "Airija", "LU": "Liuksemburgas", "HU": "Vengrija",
+              "RO": "Rumunija", "HR": "Kroatija", "GR": "Graikija", "DK": "Danija", "SI": "Slovėnija"}
 
 _seller_cache = {}
 
