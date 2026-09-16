@@ -845,6 +845,10 @@ def main():
         excluded_foreign = 0
         excluded_price_digit = 0
         excluded_seller = 0
+        excluded_price = 0
+        excluded_junk = 0
+        page_failed = 0
+        examples = []                      # keli atmestu skelbimu pavyzdziai log'ui
 
         for item in items:
             if not isinstance(item, dict):
@@ -859,6 +863,7 @@ def main():
 
             price = get_price(item)
             if price is None or not (model["min_price"] <= price <= model["max_price"]):
+                excluded_price += 1
                 continue
 
             if PRICE_LAST_DIGITS and int(price) % 10 not in PRICE_LAST_DIGITS:
@@ -878,19 +883,23 @@ def main():
                 title = og["title"]
             description = og.get("description") or ""
             page_html = og.get("_html", "")
+            if not page_html:
+                page_failed += 1
 
             condition, condition_foreign = get_condition(item, page_html)
 
+            # PASTABA: bukles kalba NEBENAUDOJAMA kaip filtras – Vinted API ja
+            # grazina ne pardavejo, o serverio kalba (pvz. prancuziskai visiems).
             if ONLY_LITHUANIAN_TEXT:
-                # Bukle Vinted rodo pardavejo kalba – "Très bon état" = ne Lietuvos skelbimas
-                lang = "bukle" if condition_foreign else detect_foreign_language(title, description)
+                lang = detect_foreign_language(title, description)
                 if lang:
                     excluded_foreign += 1
-                    if DEBUG:
-                        print(f"  [DEBUG] atmesta (kalba={lang}): {title[:60]}")
+                    if len(examples) < 5:
+                        examples.append(f"kalba={lang}: {title[:40]} | {description[:70]}")
                     continue
 
             if is_junk(title):
+                excluded_junk += 1
                 continue
 
             # Pardavejas: salis ir patikimumas (tikrinama paskutini – brangiausia)
@@ -901,6 +910,8 @@ def main():
             country_ok = (country in ALLOWED_COUNTRY_CODES) if country else (not REQUIRE_KNOWN_COUNTRY)
             if not country_ok:
                 excluded_by_country += 1
+                if len(examples) < 5:
+                    examples.append(f"salis={country}: {title[:40]}")
                 if DEBUG:
                     print(f"  [DEBUG] atmesta (salis={country}): {title[:60]}")
                 continue
@@ -909,6 +920,8 @@ def main():
             if (rating is None or reviews is None or rating < MIN_SELLER_RATING
                     or reviews < MIN_SELLER_REVIEWS):
                 excluded_seller += 1
+                if len(examples) < 5:
+                    examples.append(f"pardavejas {rating}/5, {reviews} atsil.: {title[:40]}")
                 if DEBUG:
                     print(f"  [DEBUG] atmesta (pardavejas {rating}/5, {reviews} atsil.): {title[:60]}")
                 continue
@@ -930,7 +943,11 @@ def main():
             if DEBUG:
                 print(f"  [DEBUG] PRIIMTA (salis={country}, {rating}/5): {title[:60]}")
 
-        print(f"  Gauta: {len(items)}, tinkama: {fresh}, atmesta salis: {excluded_by_country}, atmesta uzsienio kalba: {excluded_foreign}, atmesta kainos skaitmuo: {excluded_price_digit}, atmesta pardavejas: {excluded_seller}")
+        print(f"  Gauta: {len(items)}, tinkama: {fresh}, atmesta salis: {excluded_by_country}, atmesta uzsienio kalba: {excluded_foreign}, atmesta kainos skaitmuo: {excluded_price_digit}, atmesta pardavejas: {excluded_seller}, "
+              f"ne kainos ribose: {excluded_price}, slamstas: {excluded_junk}, "
+              f"skelbimo puslapis nepasiekiamas: {page_failed}")
+        for ex in examples:
+            print(f"    atmesta – {ex}")
         time.sleep(SLEEP_SECONDS)
 
     # Rusiuojame visus alertus pagal kaina (nuo maziausios)
