@@ -48,7 +48,7 @@ class State:
     """state.json: {"market": {...}, "telegram_offset": 0, "overrides": {}, "heartbeat": 0}"""
 
     # Padidinus – sena rinkos istorija isvaloma (pvz. kai pakeiciamos atrankos taisykles)
-    MARKET_VERSION = 2
+    MARKET_VERSION = 3
 
     def __init__(self, data=None):
         data = data or {}

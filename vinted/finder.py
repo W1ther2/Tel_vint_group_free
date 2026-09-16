@@ -12,7 +12,8 @@ from .language import detect_foreign_language
 from .parsing import (parse_og_tags, get_price, get_photo_url, get_photo_count, get_condition,
                       seller_from_dict, seller_from_page, listing_status)
 from .phone import (detect_model, is_accessory, find_defects, extract_storage, extract_battery,
-                    CONDITION_FACTOR, estimate_value, estimate_profit, MODEL_ORDER, condition_ok)
+                    CONDITION_FACTOR, estimate_value, estimate_profit, MODEL_ORDER, condition_ok,
+                    description_not_phone, min_price)
 from .risk import assess_risk, PICKUP_LABEL
 from .state import State, load_seen, save_seen
 from .telegram import Telegram
@@ -69,6 +70,10 @@ class Run:
             self.new_seen[iid] = time.time()
             return self.reject("ne telefonas / kitas modelis")
 
+        if price < min_price(model):
+            self.new_seen[iid] = time.time()
+            return self.reject("per pigu šiam modeliui (dėžutė / dalys?)", f"{title[:40]} {price:.0f}€")
+
         # 1) Greitas patikrinimas pagal rinkos kaina (be skelbimo puslapio)
         storage = extract_storage(title)
         quote = self.state.market.quote(model, storage)
@@ -98,6 +103,8 @@ class Run:
             return self.reject("jau parduotas")
         og = parse_og_tags(page)
         description = og.get("description") or ""
+        if description_not_phone(description) or detect_model(og.get("title") or title) is None:
+            return self.reject("ne telefonas (pagal aprašymą)", f"{title[:40]} | {description[:60]}")
 
         if c["ONLY_LITHUANIAN_TEXT"]:
             lang = detect_foreign_language(og.get("title") or title, description)

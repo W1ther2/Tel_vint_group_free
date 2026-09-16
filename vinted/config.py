@@ -27,6 +27,7 @@ DEFAULTS = {
     "HARD_MIN_PRICE_RATIO": 0.40,    # pigiau nei 40% rinkos – beveik visada sugedes/dalims/ne telefonas, atmetama
     "SUSPICIOUS_PRICE_RATIO": 0.55,  # pigiau nei 55% rinkos – siunciama, bet pazymima rizika
     "MIN_BATTERY": 0,                # min. baterijos % (0 = netikrinti)
+    "MODEL_MIN_PRICES": {},          # savos min. kainos modeliams, pvz. {"13": 100} (kitiems – numatytosios)
 
     # --- Tik tvarkingi telefonai ---
     "TIDY_ONLY": True,               # atmesti sugedusius, netestuotus, uzrakintus, su defektais

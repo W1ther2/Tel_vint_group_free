@@ -11,7 +11,7 @@ Dienos – sveikas skaicius (dienos nuo 1970-01-01).
 from dataclasses import dataclass
 
 from . import config
-from .phone import detect_model, extract_storage, is_accessory, find_defects, condition_ok
+from .phone import detect_model, extract_storage, is_accessory, find_defects, condition_ok, min_price
 from .parsing import get_condition
 from .parsing import get_price
 from .util import today, median, percentile
@@ -53,7 +53,9 @@ class Market:
             title = it.get("title") or ""
             model = detect_model(title)
             price = get_price(it)
-            if not model or price is None or price < 40 or is_accessory(title) or find_defects(title):
+            if not model or price is None or is_accessory(title) or find_defects(title):
+                continue
+            if price < max(40, min_price(model)):          # dezutes, dalys, sugede – ne rinkos kaina
                 continue
             if not condition_ok(get_condition(it), "Gera"):   # patenkinamos bukles – ne rinkos kaina
                 continue

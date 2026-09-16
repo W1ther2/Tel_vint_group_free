@@ -29,9 +29,36 @@ _MODEL_RE = re.compile(
 _VARIANTS = {"promax": "Pro Max", "pro": "Pro", "max": "Max", "plus": "Plus", "+": "Plus", "mini": "mini", "": ""}
 
 
+# Kartos pavadinimai pavadinime (su "iphone" arba be jo): "13", "15pro", "8plus", "6s", "XR"
+_GEN_TOKEN_RE = re.compile(
+    r"(?<![\w.])(?P<pre>(?:apple\s+)?iphone\s*)?(?P<gen>6s|1[0-7]|[678]|xs|xr|x|se)"
+    r"(?P<var>\s*(?:pro\s*max|promax|pro|plus|max|mini)|\+)?(?![\w])"
+)
+
+
+def _generations(t):
+    """Skirtingu iPhone kartu rinkinys pavadinime (kelioms kartoms = rinkinys/dezutes)."""
+    strong, weak = set(), set()
+    for m in _GEN_TOKEN_RE.finditer(t):
+        if t[max(0, m.start() - 4):m.start()].strip().endswith("ios"):
+            continue
+        gen = m.group("gen")
+        if m.group("pre") or m.group("var"):
+            var = re.sub(r"\s+", "", m.group("var") or "").replace("promax", "pro max").replace("+", "plus")
+            strong.add(f"{gen} {var}".strip())
+        elif gen.isdigit() or gen == "6s":
+            weak.add(gen)
+    # "13" ir "13 pro" – skirtingi modeliai; bet "iPhone 13 128GB, 13 mėn." – ne
+    if len(strong) + len(weak) >= 3:
+        return strong | weak
+    return strong
+
+
 def detect_model(title):
     """'Apple iPhone 13ProMax 256GB' -> '13 Pro Max'. None, jei nera arba keli skirtingi modeliai."""
     t = fold((title or "").lower()).replace("i phone", "iphone")
+    if len(_generations(t)) >= 2:
+        return None
     found = set()
     for m in _MODEL_RE.finditer(t):
         gen = m.group("gen")
@@ -74,6 +101,41 @@ def is_accessory(title):
     if NON_PHONE_RE.search(t):
         return True
     return bool(re.search(r"\b(for|skirtas|skirta|tinka|compatible|fur|pour|per)\s+(apple\s+)?iphone", t))
+
+
+# Stiprios frazes APRASYME, kad parduodamas ne telefonas (dezutes, detales, keli vnt.)
+DESCRIPTION_NOT_PHONE_RE = re.compile(
+    r"\b(?:tusci\w* dezut\w*|dezut\w* be telefon\w*|empty box\w*|box only|only (the )?box|tik dezut\w*|"
+    r"be telefono|telefono nera|telefonas nepridedamas|phone not included|tik korpus\w*|tik ekran\w*|"
+    r"tik dekl\w*|paveiksl\w*|remel\w*|framed|kaina uz visas|uz visus|\d+\s?(?:vnt\.?\s)?(?:telefon|dezut)\w*|lotas|lot of|"
+    r"muliaz\w*|dummy|replika|replica|kopija|detalem\w*|atsargin\w* dal\w*)"
+)
+
+
+def description_not_phone(description):
+    return bool(DESCRIPTION_NOT_PHONE_RE.search(fold((description or "").lower())))
+
+
+# Minimali realistiška tvarkingo telefono kaina (~45% iprastos naudoto kainos).
+# Pigiau = beveik visada dezute, dalys, sugedes ar apgavyste. Keiciama config.json "MODEL_MIN_PRICES".
+DEFAULT_MIN_PRICES = {
+    "8": 30, "8 Plus": 35, "X": 40, "XR": 40, "XS": 45, "XS Max": 55,
+    "11": 60, "11 Pro": 70, "11 Pro Max": 85,
+    "12 mini": 65, "12": 75, "12 Pro": 100, "12 Pro Max": 120,
+    "13 mini": 80, "13": 90, "13 Pro": 120, "13 Pro Max": 140,
+    "14": 110, "14 Plus": 120, "14 Pro": 150, "14 Pro Max": 180,
+    "15": 150, "15 Plus": 165, "15 Pro": 200, "15 Pro Max": 240,
+    "16e": 170, "16": 200, "16 Plus": 225, "16 Pro": 280, "16 Pro Max": 320,
+    "17e": 200, "17": 280, "Air": 290, "17 Pro": 380, "17 Pro Max": 450,
+}
+
+
+def min_price(model):
+    custom = config.cfg.get("MODEL_MIN_PRICES") or {}
+    try:
+        return float(custom[model]) if model in custom else float(DEFAULT_MIN_PRICES.get(model, 0))
+    except (TypeError, ValueError):
+        return float(DEFAULT_MIN_PRICES.get(model, 0))
 
 
 CONDITION_RANK = {"Nauja su etiketėmis": 5, "Nauja be etikečių": 4, "Labai gera": 3, "Gera": 2, "Patenkinama": 1}
