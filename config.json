@@ -12,7 +12,7 @@
     "hulle", "folija", "grudintas"
   ],
   "ALLOWED_COUNTRY_CODES": ["LT"],
-  "FILTER_BY_COUNTRY": false,
+  "FILTER_BY_COUNTRY": true,
   "REQUIRE_KNOWN_COUNTRY": false,
   "MIN_SELLER_RATING": 4.5,
   "MIN_SELLER_REVIEWS": 3,
