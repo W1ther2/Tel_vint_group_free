@@ -94,6 +94,11 @@ class ParsingTest(unittest.TestCase):
         self.assertEqual(listing_status(200, "<html>", "https://www.vinted.lt/catalog", 1), "gone")
         self.assertEqual(listing_status(500, "", "", 1), "unknown")
 
+    def test_photo_count_not_from_catalog_list(self):
+        from vinted.parsing import get_photo_count
+        self.assertIsNone(get_photo_count({"photos": [{"url": "a"}]}))
+        self.assertEqual(get_photo_count({"photos_count": 6}), 6)
+
     def test_seller(self):
         info = seller_from_dict({"country_code": "LT", "feedback_reputation": 0.9, "feedback_count": 10,
                                  "given_item_count": 4, "created_at": "2020-01-01T00:00:00Z", "city": "Vilnius"})

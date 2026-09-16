@@ -38,6 +38,15 @@ class CommandsTest(unittest.TestCase):
         commands.handle("/testi", self.state)
         self.assertFalse(config.cfg["PAUSED"])
 
+    def test_stats(self):
+        self.assertIn("dar nėra", commands.handle("/statistika", self.state))
+        import time
+        self.state.last_run = {"time": time.time(), "fetched": 3000, "new": 500, "sent": 15,
+                               "totals": {"per brangu": 400, "defektai": 30}}
+        text = commands.handle("/statistika", self.state)
+        self.assertIn("per brangu: <b>400</b>", text)
+        self.assertIn("/nuolaida 10", text)
+
     def test_bad_input(self):
         self.assertIn("Neteisinga", commands.handle("/nuolaida daug", self.state))
         self.assertIsNone(commands.handle("/nezinoma", self.state))
