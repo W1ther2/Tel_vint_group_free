@@ -2,10 +2,9 @@ name: Vinted deal finder
 
 on:
   schedule:
-    - cron: "*/10 * * * *"      # kas 10 min (GitHub realiai gali veluoti)
-  workflow_dispatch:             # rankinis paleidimas
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
 
-# Du paleidimai vienu metu nevyks (kitaip ateitu dublikatai)
 concurrency:
   group: vinted-finder
   cancel-in-progress: false
@@ -23,7 +22,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
 
       - name: Idiegti bibliotekas
         run: pip install requests curl_cffi
@@ -42,7 +40,7 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
-          git add seen.json state.json
+          for f in seen.json state.json; do [ -f "$f" ] && git add "$f"; done
           git diff --cached --quiet || git commit -m "Atnaujinta busena"
           git pull --rebase --autostash || true
           git push || true
