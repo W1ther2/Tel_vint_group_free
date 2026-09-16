@@ -49,7 +49,8 @@ DEFAULTS = {
     "REQUIRE_KNOWN_COUNTRY": True,     # atmesti, jei pardavejo salies nustatyti nepavyko
     "MIN_SELLER_RATING": 4.5,          # minimalus pardavejo ivertinimas (0-5)
     "MIN_SELLER_REVIEWS": 3,           # minimalus atsiliepimu skaicius
-    "ONLY_LITHUANIAN_TEXT": True,
+    "ONLY_LITHUANIAN_TEXT": True,      # kalbos filtras ijungtas
+    "ALLOWED_LANGUAGES": ["LT", "EN"], # kokiomis kalbomis skelbimai praleidziami
     "PRICE_LAST_DIGITS": [],
     "PAGES": 3,
     "SLEEP_SECONDS": 3,
@@ -90,6 +91,7 @@ REQUIRE_KNOWN_COUNTRY = bool(_CFG["REQUIRE_KNOWN_COUNTRY"])
 MIN_SELLER_RATING = float(_CFG["MIN_SELLER_RATING"])
 MIN_SELLER_REVIEWS = int(_CFG["MIN_SELLER_REVIEWS"])
 ONLY_LITHUANIAN_TEXT = bool(_CFG["ONLY_LITHUANIAN_TEXT"])
+ALLOWED_LANGUAGES = {str(x).upper() for x in _CFG["ALLOWED_LANGUAGES"]} | {"LT"}
 PRICE_LAST_DIGITS = set(_CFG["PRICE_LAST_DIGITS"])
 PAGES = int(_CFG["PAGES"])
 SLEEP_SECONDS = int(_CFG["SLEEP_SECONDS"])
@@ -297,7 +299,9 @@ def fetch_page_with_retry(query, page):
     return None
 
 
-def fetch_items(query, pages):
+def fetch_items(query, pages, seen=None):
+    """Skelbimai rikiuojami nuo naujausiu, tad jei VISI puslapio skelbimai jau
+    matyti – toliau nebeverta ziureti (sutaupo daug laiko)."""
     items = []
     for page in range(1, pages + 1):
         batch = fetch_page_with_retry(query, page)
@@ -306,7 +310,11 @@ def fetch_items(query, pages):
         if not batch:          # daugiau nera – stabdome puslapiavima
             break
         items.extend(batch)
-        time.sleep(SLEEP_SECONDS)
+        if seen and all(isinstance(b, dict) and str(b.get("id")) in seen for b in batch):
+            print(f"  p.{page}: visi skelbimai jau matyti – toliau nebetikrinu")
+            break
+        if page < pages:
+            time.sleep(SLEEP_SECONDS)
     return items
 
 
@@ -647,7 +655,10 @@ def detect_foreign_language(*texts):
         n = len(set(rx.findall(folded)))
         if n:
             foreign[lang] = foreign.get(lang, 0) + 2 * n
-    best_lang, best_score = max(foreign.items(), key=lambda kv: kv[1]) if foreign else (None, 0)
+    # Lygiosiose pirmenybe leidziamai kalbai (pvz. EN), kad atsitiktinis
+    # "con"/"est" nepadarytu angliško teksto itališku/prancūzišku
+    best_lang, best_score = (max(foreign.items(), key=lambda kv: (kv[1], kv[0] in ALLOWED_LANGUAGES))
+                             if foreign else (None, 0))
 
     if DEBUG:
         print(f"  [DEBUG] kalba: LT={lt_score}, kitos={foreign}")
@@ -658,8 +669,8 @@ def detect_foreign_language(*texts):
         return best_lang
 
     words = [w for w in re.findall(r"[a-z]{3,}", folded) if w not in NEUTRAL_WORDS]
-    if len(set(words)) >= 4:
-        return "??"
+    if len(set(words)) >= 4 and "EN" not in ALLOWED_LANGUAGES:
+        return "??"      # ilgas lotyniskas tekstas be jokiu pozymiu (kai EN leidziama – praleidziam)
     return None
 
 
@@ -838,7 +849,7 @@ def main():
     for model in MODELS:
         q = model["query"]
         print(f"Tikrinama: '{q}' ({model['min_price']}-{model['max_price']} EUR)...")
-        items = fetch_items(q, PAGES)
+        items = fetch_items(q, PAGES, seen)
         total_fetched += len(items)
         fresh = 0
         excluded_by_country = 0
@@ -894,7 +905,7 @@ def main():
             # grazina ne pardavejo, o serverio kalba (pvz. prancuziskai visiems).
             if ONLY_LITHUANIAN_TEXT:
                 lang = detect_foreign_language(title, description)
-                if lang:
+                if lang and lang not in ALLOWED_LANGUAGES:
                     excluded_foreign += 1
                     if len(examples) < 5:
                         examples.append(f"kalba={lang}: {title[:40]} | {description[:70]}")
@@ -928,7 +939,7 @@ def main():
                     print(f"  [DEBUG] atmesta (pardavejas {rating}/5, {reviews} atsil.): {title[:60]}")
                 continue
 
-            alerts.append({
+            deal = {
                 "query": q,
                 "title": item.get("title") or title,
                 "price": price,
@@ -939,8 +950,18 @@ def main():
                 "rating": (rating, reviews),
                 "country": country,
                 "city": seller.get("city"),
-            })
+            }
+            alerts.append(deal)
             fresh += 1
+
+            # Siunciam IS KARTO, nelaukiant, kol bus patikrinti visi modeliai
+            if DRY_RUN:
+                print(f"  [DRY_RUN] rastas: {q} {price:.0f} EUR: {deal['title'][:50]}")
+            else:
+                send_deal(deal)
+                print(f"  -> {q} {price:.0f} EUR: {deal['title'][:50]}")
+                save_seen(new_seen)       # kad nuluzus skriptui neateitu dublikatai
+                time.sleep(1)             # Telegram riboja zinuciu greiti
             checked_sellers += 1
             if DEBUG:
                 print(f"  [DEBUG] PRIIMTA (salis={country}, {rating}/5): {title[:60]}")
@@ -951,9 +972,6 @@ def main():
         for ex in examples:
             print(f"    atmesta – {ex}")
         time.sleep(SLEEP_SECONDS)
-
-    # Rusiuojame visus alertus pagal kaina (nuo maziausios)
-    alerts.sort(key=lambda a: a["price"])
 
     save_seen(new_seen)
 
@@ -979,11 +997,6 @@ def main():
         print(f"[DRY_RUN] Rasta {len(alerts)} dealu, bet zinuciu NESIUNCIAMA.")
         print("[DRY_RUN] Pakeisk DRY_RUN = False ir paleisk dar karta.")
         return
-
-    for a in alerts:
-        send_deal(a)
-        print(f"  -> {a['query']} {a['price']:.0f} EUR: {a['title'][:50]}")
-        time.sleep(1)                     # Telegram riboja zinuciu greiti
 
     print(f"Issiusta {len(alerts)} alert'u.")
 
