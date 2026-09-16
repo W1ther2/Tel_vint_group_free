@@ -59,6 +59,7 @@ class State:
         self.telegram_offset = int(data.get("telegram_offset") or 0)
         self.overrides = data.get("overrides") or {}
         self.heartbeat = float(data.get("heartbeat") or 0)
+        self.last_run = data.get("last_run") or {}
 
     @classmethod
     def load(cls, path=None, old_prices_path=None, seen=None):
@@ -89,6 +90,6 @@ class State:
         self.market.prune()
         data = {"market_version": self.MARKET_VERSION, "market": self.market.to_dict(),
                 "telegram_offset": self.telegram_offset,
-                "overrides": self.overrides, "heartbeat": self.heartbeat}
+                "overrides": self.overrides, "heartbeat": self.heartbeat, "last_run": self.last_run}
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, separators=(",", ":"))

@@ -242,6 +242,8 @@ class Run:
         summary = ", ".join(f"{k}: {n}" for k, n in sorted(self.totals.items(), key=lambda kv: -kv[1]))
         print(f"IS VISO: gauta {fetched}, tinkama {len(self.alerts)}. Atmesta – {summary}")
         self.heartbeat(fetched, summary)
+        self.state.last_run = {"time": int(time.time()), "fetched": fetched, "new": self.new_count,
+                               "sent": len(self.alerts), "totals": self.totals}
         self.state.save()
         save_seen(self.new_seen)
 

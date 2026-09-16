@@ -73,8 +73,15 @@ def get_photo_url(item, og=None):
 
 
 def get_photo_count(item):
-    photos = item.get("photos")
-    return len(photos) if isinstance(photos, list) else None
+    """Tikras nuotrauku skaicius, TIK jei Vinted ji pateikia atskiru lauku.
+    Katalogo "photos" sarasas turi tik pagrindine nuotrauka, todel jo ilgis
+    (visada 1) NENAUDOJAMAS – kitaip visi skelbimai atrodytu "su 1 nuotrauka"."""
+    for key in ("photos_count", "photo_count", "total_photos"):
+        try:
+            return int(item[key])
+        except (KeyError, TypeError, ValueError):
+            continue
+    return None
 
 
 # --- Bukle ------------------------------------------------------------------

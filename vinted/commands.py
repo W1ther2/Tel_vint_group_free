@@ -16,6 +16,7 @@ HELP = """<b>Komandos</b>
 /garsas 30 – su garsu tik nuo 30% pigiau
 /tvarkingi taip|ne – tik tvarkingi telefonai
 /pauze – nesiųsti skelbimų, /testi – vėl siųsti
+/statistika – kodėl atmesti skelbimai (paskutinis paleidimas)
 /nustatymai – dabartiniai nustatymai
 <i>Komandos įvykdomos kito paleidimo metu.</i>"""
 
@@ -50,6 +51,33 @@ def _prices_text(state):
             parts.append(f"🏷 {a:.0f} € ({n})")
         lines.append(f"iPhone {model}: " + " · ".join(parts))
     return "\n".join(lines) if len(lines) > 1 else "Kainų duomenų dar nėra."
+
+
+TIPS = {
+    "per brangu": "normalu – kaina ne žemiau rinkos. Daugiau skelbimų: /nuolaida 10",
+    "ne pakankamai pigu": "pigiau už rinką, bet mažiau nei nuolaida. Daugiau: /nuolaida 10",
+    "per mazai kainu duomenu": "modeliui dar trūksta kainų – kaupsis savaime arba /kaina 13 180",
+    "ne telefonas / kitas modelis": "dėklai, stiklai, kiti modeliai – normalu",
+    "defektai": "sugedę telefonai. Siųsti ir juos: /tvarkingi ne",
+    "kalba": "užsienio kalba – normalu",
+    "salis": "pardavėjas ne iš Lietuvos",
+    "pardavejas": "per mažas pardavėjo įvertinimas (config.json MIN_SELLER_RATING)",
+}
+
+
+def _stats_text(state):
+    r = state.last_run or {}
+    if not r:
+        return "Statistikos dar nėra – bus po kito paleidimo."
+    import time as _t
+    mins = int((_t.time() - r.get("time", 0)) // 60)
+    totals = sorted((r.get("totals") or {}).items(), key=lambda kv: -kv[1])
+    lines = [f"<b>Paskutinis paleidimas</b> (prieš {mins} min.)",
+             f"Gauta: {r.get('fetched', 0)}, naujų: {r.get('new', 0)}, išsiųsta: {r.get('sent', 0)}", ""]
+    for reason, n in totals[:10]:
+        tip = next((v for k, v in TIPS.items() if reason.startswith(k)), "")
+        lines.append(f"• {reason}: <b>{n}</b>" + (f"\n   <i>{tip}</i>" if tip else ""))
+    return "\n".join(lines)
 
 
 def handle(text, state):
@@ -88,6 +116,9 @@ def handle(text, state):
             prices[key] = price
             _set(state, "MARKET_PRICES", prices)
             return f"✅ {name}: rinkos kaina {price:.0f} €"
+
+        if cmd in ("statistika", "stats"):
+            return _stats_text(state)
 
         if cmd == "kainos":
             return _prices_text(state)
