@@ -31,8 +31,8 @@ jobs:
 
       - name: Paleisti
         env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
+          BOT_TOKEN: ${{ secrets.BOT }}
+          CHAT_ID: ${{ secrets.TEL }}
         run: python vinted_deal_finder.py
 
       - name: Issaugoti busena
