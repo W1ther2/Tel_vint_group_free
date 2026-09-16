@@ -1,41 +1,48 @@
-name: Vinted checker
+name: Vinted deal finder
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # kas 15 minuciu
-  workflow_dispatch:          # leidzia paleisti ranka mygtuku
+    - cron: "*/10 * * * *"      # kas 10 min (GitHub realiai gali veluoti)
+  workflow_dispatch:             # rankinis paleidimas
+
+# Du paleidimai vienu metu nevyks (kitaip ateitu dublikatai)
+concurrency:
+  group: vinted-finder
+  cancel-in-progress: false
+
+permissions:
+  contents: write
 
 jobs:
-  check:
+  run:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
 
-      - name: Idiegti biblioteka
-        run: pip install requests
+      - name: Idiegti bibliotekas
+        run: pip install requests curl_cffi
 
-      - name: Paleisti tikrinima
+      - name: Testai
+        run: python -m unittest discover tests
+
+      - name: Paleisti
         env:
-          BOT_TOKEN: ${{ secrets.BOT }}
-          CHAT_ID: ${{ secrets.TEL }}
-        run: |
-          ls -la
-          python vinted_deal_finder_v8.py
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: python vinted_deal_finder.py
 
-      - name: Issaugoti seen.json
+      - name: Issaugoti busena
+        if: always()
         run: |
-          git config user.name "vinted-bot"
-          git config user.email "vinted-bot@users.noreply.github.com"
-          if [ -f seen.json ]; then
-            git add seen.json
-            git commit -m "update seen" || true
-            git push || true
-          else
-            echo "seen.json nesukurtas - skriptas turbut nebaige darbo"
-          fi
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add seen.json state.json
+          git diff --cached --quiet || git commit -m "Atnaujinta busena"
+          git pull --rebase --autostash || true
+          git push || true
