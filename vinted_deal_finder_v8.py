@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Vinted deal finder v9 — sutvarkyta versija.
+Vinted deal finder v10 — naujas katalogo API adresas (api.vinted.lt/svc-catalogue).
 
 Ka daro:
   1. Pagal config.json modelius iesko skelbimu Vinted kataloge (naujausi pirmi).
@@ -34,6 +34,13 @@ CHAT_ID = os.environ.get("CHAT_ID", "")
 CONFIG_FILE = "config.json"
 SEEN_FILE = "seen.json"
 BASE = "https://www.vinted.lt"
+API_BASE = "https://api.vinted.lt"   # nuo 2026-09 katalogas persikele cia
+
+# Katalogo endpoint'ai – bandomi is eiles, kol vienas suveikia.
+CATALOG_ENDPOINTS = [
+    API_BASE + "/svc-catalogue/items",   # naujas
+    BASE + "/api/v2/catalog/items",      # senas (grazina 404)
+]
 
 DEFAULTS = {
     "MODELS": [
@@ -102,14 +109,29 @@ except ImportError:
 import requests as plain_requests  # Telegram'ui uztenka paprasto
 
 
+def _clean_body(text, limit=150):
+    """Is HTML klaidos puslapio padaro trumpa skaitoma teksta."""
+    title = re.search(r"<title>(.*?)</title>", text, re.I | re.S)
+    if title:
+        return "puslapis: " + html.unescape(title.group(1)).strip()[:limit]
+    return re.sub(r"\s+", " ", text)[:limit]
+
+
 class VintedClient:
     def __init__(self):
         self.session = None
         self.last_error = ""   # paskutine klaida – siunciama i Telegram diagnostikai
+        self.anon_id = None
+        self.csrf_token = None
 
     def _headers(self, json_api=True):
         h = {"Accept-Language": "lt-LT,lt;q=0.9,en;q=0.8", "Referer": BASE + "/"}
         h["Accept"] = "application/json, text/plain, */*" if json_api else "text/html,*/*"
+        if json_api:
+            if self.anon_id:
+                h["X-Anon-Id"] = self.anon_id
+            if self.csrf_token:
+                h["X-Csrf-Token"] = self.csrf_token
         if not USING_CFFI:  # curl_cffi pats nustato tikra Chrome User-Agent
             h["User-Agent"] = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
@@ -128,17 +150,21 @@ class VintedClient:
             if r.status_code != 200 or not has_token:
                 self.last_error = (f"Pagrindinis puslapis: HTTP {r.status_code}, "
                                    f"access_token_web {'yra' if has_token else 'nera'}")
-            debug(f"slapukai: {cookies}")
+            self.anon_id = r.headers.get("x-anon-id") or self.session.cookies.get("anon_id")
+            m = re.search(r'"CSRF_TOKEN\\?"\s*:\s*\\?"([0-9a-f-]{36})', r.text) or \
+                re.search(r'"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"', r.text)
+            self.csrf_token = m.group(1) if m else None
+            debug(f"slapukai: {cookies}, anon_id={self.anon_id}, csrf={self.csrf_token}")
         except Exception as e:
             self.last_error = f"Nepavyko atidaryti {BASE}: {e}"
             print("!", self.last_error)
         time.sleep(2)
 
-    def get_json(self, path, params, retries=3):
-        """GET i Vinted API. Grazina dict arba None."""
+    def get_json(self, url, params, retries=3):
+        """GET i Vinted API. Grazina dict, None (klaida) arba "404"."""
         for attempt in range(1, retries + 1):
             try:
-                r = self.session.get(BASE + path, params=params, headers=self._headers(), timeout=20)
+                r = self.session.get(url, params=params, headers=self._headers(), timeout=20)
             except Exception as e:
                 self.last_error = f"Tinklo klaida: {e}"
                 print(f"  ! {self.last_error} (bandymas {attempt}/{retries})")
@@ -154,13 +180,16 @@ class VintedClient:
                     print("  !", self.last_error)
                     return None
 
-            self.last_error = f"HTTP {code}: {r.text[:150]}"
+            short_url = url.split("//", 1)[-1]
+            self.last_error = f"HTTP {code} ({short_url}): {_clean_body(r.text)}"
             print(f"  ! {self.last_error} (bandymas {attempt}/{retries})")
             if code in (401, 403):
                 self.start()                      # pasenes/ neduotas tokenas – nauja sesija
                 time.sleep(SLEEP)
             elif code == 429 or code >= 500:
                 time.sleep(SLEEP * attempt * 2)
+            elif code == 404:
+                return "404"
             else:
                 return None
         return None
@@ -181,16 +210,24 @@ class VintedClient:
 # 3. VINTED DUOMENYS
 # ======================================================================
 
+_working_endpoint = None
+
+
 def search_items(client, query, pages):
     """Grazina visu puslapiu skelbimu sarasa (naujausi pirmi)."""
+    global _working_endpoint
     items = []
     for page in range(1, pages + 1):
-        data = client.get_json("/api/v2/catalog/items", {
-            "search_text": query,
-            "order": "newest_first",
-            "per_page": 96,
-            "page": page,
-        })
+        params = {"search_text": query, "order": "newest_first", "per_page": 96, "page": page}
+        endpoints = [_working_endpoint] if _working_endpoint else CATALOG_ENDPOINTS
+        data = None
+        for endpoint in endpoints:
+            data = client.get_json(endpoint, params)
+            if isinstance(data, dict):
+                if _working_endpoint != endpoint:
+                    print(f"  Naudojamas endpoint'as: {endpoint}")
+                _working_endpoint = endpoint
+                break
         if not isinstance(data, dict):
             break
         batch = data.get("items")
@@ -200,24 +237,31 @@ def search_items(client, query, pages):
             break
         if not batch:
             break
+        if page == 1:
+            debug(f"pirmo skelbimo laukai: {json.dumps(batch[0], ensure_ascii=False)[:1500]}")
         items.extend(batch)
         time.sleep(SLEEP)
     return items
 
 
 def get_price(item):
-    """Kaina EUR. Dabartinis formatas: {"amount": "150.0", "currency_code": "EUR"}."""
-    p = item.get("price")
-    if isinstance(p, dict):
-        p = p.get("amount")
-    try:
-        return float(str(p).replace(",", "."))
-    except (TypeError, ValueError):
-        return None
+    """Kaina EUR. Formatai: {"amount": "150.0", "currency_code": "EUR"} arba "150.0"."""
+    for key in ("price", "price_numeric", "total_item_price"):
+        p = item.get(key)
+        if isinstance(p, dict):
+            p = p.get("amount")
+        if p is None:
+            continue
+        m = re.search(r"\d+(?:[.,]\d+)?", str(p).replace("\u00a0", "").replace(" ", ""))
+        if m:
+            return float(m.group(0).replace(",", "."))
+    return None
 
 
 def get_item_url(item):
     url = item.get("url") or item.get("path") or ""
+    if not url and item.get("id"):
+        url = f"/items/{item['id']}"
     return BASE + url if url.startswith("/") else url
 
 
@@ -427,8 +471,6 @@ def main():
         print(f"Tikrinama: '{q}' ({model['min_price']}-{model['max_price']} EUR)...")
         items = search_items(client, q, int(CFG["PAGES"]))
         total_fetched += len(items)
-        if items:
-            debug(f"pirmo skelbimo price: {items[0].get('price')!r}")
 
         stats = {}
         for item in items:
