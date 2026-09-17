@@ -45,7 +45,7 @@ def format_card(d):
     q = d["quote"]
     basis = d["storage"] if q.by_storage else "visos talpos"
     source = {"rankinė": "nustatyta ranka", "parduoti": f"{q.samples} parduotų",
-              "skelbimai": f"{q.samples} skelb."}[q.source]
+              "skelbimai": f"{q.samples} skelb.", "apytikslė": "apytikslė – mažai duomenų"}[q.source]
     lines.append(f"📊 <b>Rinkos kaina:</b> {q.price:.0f} € ({html.escape(basis)}, {source})")
     if d.get("defects"):
         lines.append(f"⚠️ <b>Defektai:</b> {html.escape(', '.join(d['defects']))}")

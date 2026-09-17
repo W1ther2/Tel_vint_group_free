@@ -130,6 +130,12 @@ DEFAULT_MIN_PRICES = {
 }
 
 
+def typical_price(model):
+    """Apytiksle iprasta tvarkingo naudoto telefono kaina (is DEFAULT_MIN_PRICES, ~45%)."""
+    floor = DEFAULT_MIN_PRICES.get(model)
+    return round(floor / 0.45 / 5) * 5 if floor else None
+
+
 def min_price(model):
     custom = config.cfg.get("MODEL_MIN_PRICES") or {}
     try:

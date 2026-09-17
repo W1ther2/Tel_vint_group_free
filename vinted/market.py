@@ -11,7 +11,7 @@ Dienos – sveikas skaicius (dienos nuo 1970-01-01).
 from dataclasses import dataclass
 
 from . import config
-from .phone import detect_model, extract_storage, is_accessory, find_defects, condition_ok, min_price
+from .phone import detect_model, extract_storage, is_accessory, find_defects, condition_ok, min_price, typical_price
 from .parsing import get_condition
 from .parsing import get_price
 from .util import today, median, percentile
@@ -138,6 +138,14 @@ class Market:
             asking = trimmed(values("active", c["PRICE_HISTORY_DAYS"], by_storage, "l"))
             if len(asking) >= c["MIN_SAMPLES"]:
                 return Quote(percentile(asking, c["MARKET_PERCENTILE"]), len(asking), "skelbimai", by_storage)
+        # Retiems modeliams (16e, 14 Plus, Air...) skelbimu per mazai – naudojam apytiksle kaina,
+        # o jei keli skelbimai jau yra – vidurki tarp ju ir apytiksles kainos.
+        if c["USE_TYPICAL_FALLBACK"] and typical_price(model):
+            asking = trimmed(values("active", c["PRICE_HISTORY_DAYS"], False, "l"))
+            guess = typical_price(model)
+            if len(asking) >= 3:
+                guess = (guess + percentile(asking, c["MARKET_PERCENTILE"])) / 2
+            return Quote(guess, len(asking), "apytikslė", False)
         return None
 
     def sample_count(self, model):

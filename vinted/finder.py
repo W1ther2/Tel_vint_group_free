@@ -62,11 +62,10 @@ class Run:
             if self.state.market.already_alerted_at(iid, price):
                 return self.reject("jau matyti")
             drop_from = prev
-        else:
-            self.new_count += 1
 
         model = detect_model(title)
         if not model or is_accessory(title) or price is None:
+            self.new_count += 0 if drop_from else 1
             self.new_seen[iid] = time.time()
             return self.reject("ne telefonas / kitas modelis")
 
@@ -80,6 +79,8 @@ class Run:
         if quote is None:
             # nezymim kaip matyto – kai atsiras duomenu, ivertinsim
             return self.reject("per mazai kainu duomenu", f"iPhone {model} ({self.state.market.sample_count(model)} skelb.)")
+        if not drop_from:
+            self.new_count += 1
         cat_condition = get_condition(item)
         if c["TIDY_ONLY"] and not condition_ok(cat_condition, c["MIN_CONDITION"]):
             self.new_seen[iid] = time.time()

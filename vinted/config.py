@@ -41,6 +41,7 @@ DEFAULTS = {
     "SOLD_CHECKS_PER_RUN": 15,       # kiek senu skelbimu per paleidima patikrinti, ar parduoti
     "SOLD_CHECK_AFTER_DAYS": 2,      # tikrinti skelbimus, kuriu kataloge nematem bent tiek dienu
     "MIN_SAMPLES": 8,                # kiek prasomu kainu reikia rinkos kainai
+    "USE_TYPICAL_FALLBACK": True,    # kai duomenu per mazai – naudoti apytiksle kaina (retiems modeliams)
     "MARKET_PERCENTILE": 0.35,       # prasomu kainu percentilis (0.5 = mediana)
     "PRICE_HISTORY_DAYS": 30,
     "SOLD_HISTORY_DAYS": 60,
