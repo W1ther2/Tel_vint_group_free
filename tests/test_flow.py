@@ -164,12 +164,24 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(tg3.deals, [])
 
     def test_not_enough_data_retried_later(self):
-        reset_config(SEARCH_QUERIES=["iPhone 13"], HEARTBEAT_HOURS=0, MIN_SAMPLES=8)
+        reset_config(SEARCH_QUERIES=["iPhone 13"], HEARTBEAT_HOURS=0, MIN_SAMPLES=8, USE_TYPICAL_FALLBACK=False)
         with TempDir():
             client = FakeClient({"iPhone 13": [item(1, "iPhone 13", 150)]})
             log = run(client, FakeTelegram())
             self.assertIn("per mazai kainu duomenu", log)
             self.assertNotIn("1", read_json("seen.json"))
+
+    def test_rare_model_uses_typical_price(self):
+        reset_config(SEARCH_QUERIES=["iPhone 16e"], HEARTBEAT_HOURS=0, MIN_SAMPLES=8)
+        with TempDir():
+            from vinted.phone import typical_price
+            price = round(typical_price("16e") * 0.6)
+            client = FakeClient({"iPhone 16e": [item(1, "iPhone 16e 128GB", price)]},
+                                pages={"1": "Parduodu tvarkingą telefoną, baterija 95%, siunčiu per Vinted"})
+            tg = FakeTelegram()
+            run(client, tg)
+            self.assertEqual(len(tg.deals), 1)
+            self.assertEqual(tg.deals[0][0]["quote"].source, "apytikslė")
 
     def test_commands_and_pause(self):
         with TempDir():
@@ -192,7 +204,8 @@ class FlowTest(unittest.TestCase):
 
     def test_sold_check_and_sold_prices(self):
         reset_config(SEARCH_QUERIES=["iPhone 13"], HEARTBEAT_HOURS=0, MIN_SAMPLES=100, MIN_SOLD_SAMPLES=3,
-                     SOLD_CHECK_AFTER_DAYS=0, SOLD_CHECKS_PER_RUN=50)
+                     SOLD_CHECK_AFTER_DAYS=0, SOLD_CHECKS_PER_RUN=50,
+                     USE_TYPICAL_FALLBACK=False)
         with TempDir():
             from vinted.util import today
             d = today() - 3

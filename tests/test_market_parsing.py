@@ -33,6 +33,8 @@ class MarketTest(unittest.TestCase):
         self.assertEqual(m.quote("13", "128 GB", day=100).source, "rankinė")
         config.cfg["MARKET_PRICES"] = {"13|128 GB": 190}
         self.assertEqual(m.quote("13", "128 GB", day=100).price, 190)
+        self.assertEqual(m.quote("15", None, day=100).source, "apytikslė")
+        config.cfg["USE_TYPICAL_FALLBACK"] = False
         self.assertIsNone(m.quote("15", None, day=100))
 
     def test_sold_candidates(self):
