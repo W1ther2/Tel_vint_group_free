@@ -121,7 +121,7 @@ class FlowTest(unittest.TestCase):
         reset_config(SEARCH_QUERIES=["iPhone XR"], HEARTBEAT_HOURS=0, MIN_SAMPLES=8, MARKET_PERCENTILE=0.5,
                      MIN_DISCOUNT=0.15, TIDY_ONLY=True, HARD_MIN_PRICE_RATIO=0.4)
         with TempDir():
-            market = [item(1000 + i, "iPhone XR 64GB", 110 + i * 3, user_id=600 + i) for i in range(20)]
+            market = [item(1000 + i, "iPhone XR 64GB", 125 + i * 2, user_id=600 + i) for i in range(20)]
             junk = [item(2000 + i, "iPhone XR", 20 + i, user_id=700 + i, status="Patenkinama") for i in range(15)]
             cat = market + junk + [
                 item(1, "Apple iphone XR", 80, user_id=1, status="Labai gera"),       # uzrakintas kodu
@@ -225,12 +225,21 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(tg.deals[0][0]["quote"].source, "parduoti")
 
     def test_heartbeat_and_zero_warning(self):
-        reset_config(SEARCH_QUERIES=["iPhone 13"], HEARTBEAT_HOURS=24)
+        reset_config(SEARCH_QUERIES=["iPhone 13"], HEARTBEAT_HOURS=24, FAIL_ALERT_RUNS=3)
         with TempDir():
             tg = FakeTelegram()
             run(FakeClient({}), tg)
             self.assertTrue(any("skriptas veikia" in m for m in tg.messages))
+            # vienkartinis nesekmingas paleidimas (pvz. Vinted 403) – dar nepranesam
+            self.assertFalse(any("ISPEJIMAS" in m for m in tg.messages))
+            for _ in range(2):
+                tg = FakeTelegram()
+                run(FakeClient({}), tg)
             self.assertTrue(any("ISPEJIMAS" in m for m in tg.messages))
+            self.assertEqual(read_json("state.json")["fail_streak"], 0)
+            tg = FakeTelegram()
+            run(FakeClient({}), tg)
+            self.assertFalse(any("ISPEJIMAS" in m for m in tg.messages))
             tg2 = FakeTelegram()
             run(FakeClient({}), tg2)
             self.assertFalse(any("skriptas veikia" in m for m in tg2.messages))

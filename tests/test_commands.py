@@ -47,6 +47,11 @@ class CommandsTest(unittest.TestCase):
         self.assertIn("per brangu: <b>400</b>", text)
         self.assertIn("/nuolaida 10", text)
 
+    def test_market_percentile(self):
+        self.assertIn("mediana", commands.handle("/rinka 50", self.state))
+        self.assertEqual(config.cfg["MARKET_PERCENTILE"], 0.5)
+        self.assertIn("Neteisinga", commands.handle("/rinka 99", self.state))
+
     def test_bad_input(self):
         self.assertIn("Neteisinga", commands.handle("/nuolaida daug", self.state))
         self.assertIsNone(commands.handle("/nezinoma", self.state))
