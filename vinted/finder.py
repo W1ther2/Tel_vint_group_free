@@ -69,10 +69,6 @@ class Run:
             self.new_seen[iid] = time.time()
             return self.reject("ne telefonas / kitas modelis")
 
-        if price < min_price(model):
-            self.new_seen[iid] = time.time()
-            return self.reject("per pigu šiam modeliui (dėžutė / dalys?)", f"{title[:40]} {price:.0f}€")
-
         # 1) Greitas patikrinimas pagal rinkos kaina (be skelbimo puslapio)
         storage = extract_storage(title)
         quote = self.state.market.quote(model, storage)
@@ -89,10 +85,13 @@ class Run:
         if price > best_case * (1 - c["MIN_DISCOUNT"]):
             self.new_seen[iid] = time.time()
             return self.reject("per brangu")
-        if price < quote.price * c["HARD_MIN_PRICE_RATIO"]:
+        # Riba: 40% rinkos kainos arba modelio minimali kaina – kuri mazesne (kad
+        # apytiksle kaina ar mano ivertinta minimali kaina neatmestu tikru pigiu telefonu)
+        floor = min(quote.price * c["HARD_MIN_PRICE_RATIO"], min_price(model) or float("inf"))
+        if price < floor:
             self.new_seen[iid] = time.time()
             return self.reject("per pigu (sugedęs / dalims / ne telefonas?)",
-                               f"{title[:40]} {price:.0f}€ (rinka {quote.price:.0f}€)")
+                               f"{title[:40]} {price:.0f}€ (riba {floor:.0f}€, rinka {quote.price:.0f}€)")
         self.new_seen[iid] = time.time()
 
         # 2) Skelbimo puslapis
