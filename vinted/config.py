@@ -7,9 +7,11 @@ import os
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 CHAT_ID = os.environ.get("CHAT_ID", "")
 
-CONFIG_FILE = "config.json"
-SEEN_FILE = "seen.json"
-STATE_FILE = "state.json"          # rinkos kainos, parduoti skelbimai, Telegram nustatymai
+# Failu vardus galima pakeisti aplinkos kintamaisiais – taip tas pats kodas gali
+# suktis ir "gyvai", ir testams (su kitu botu ir atskira busena).
+CONFIG_FILE = os.environ.get("CONFIG_FILE", "config.json")
+SEEN_FILE = os.environ.get("SEEN_FILE", "seen.json")
+STATE_FILE = os.environ.get("STATE_FILE", "state.json")
 OLD_PRICES_FILE = "prices.json"    # senas formatas – automatiskai perkeliamas i state.json
 
 BASE = "https://www.vinted.lt"
@@ -86,6 +88,10 @@ DEFAULTS = {
     "ALLOWED_LANGUAGES": ["LT", "EN"],
 
     # --- Veikimas ---
+    # Vinted kategorijos/prekes zenklo filtras. Tuscia = filtras nenaudojamas.
+    # ID suzinosi is log'o eilutes "Daznos kategorijos/brandai" po paleidimo.
+    "CATALOG_IDS": [],               # pvz. [2342] – mobilieji telefonai
+    "BRAND_IDS": [],                 # pvz. [12] – Apple
     "ROTATE_QUERIES": True,          # kiekviena paleidima pradeti nuo kito modelio (tolygesnis greitis)
     "PAGES": 2,                      # puslapiu (po 96 skelb.) kiekvienai paieskai iprastai
     "FULL_SCAN_PAGES": 10,           # kai seen.json tuscias (pirmas/pilnas paleidimas) – perziureti daugiau

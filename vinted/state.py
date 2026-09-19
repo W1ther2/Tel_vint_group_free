@@ -62,6 +62,9 @@ class State:
         self.last_run = data.get("last_run") or {}
         self.fail_streak = int(data.get("fail_streak") or 0)
         self.query_offset = int(data.get("query_offset") or 0)
+        # {vartotojo_id: {"chat": privataus pokalbio id, "name": vardas,
+        #                 "watch": [modeliai], "hide": [pardaveju id]}}
+        self.users = data.get("users") or {}
 
     @classmethod
     def load(cls, path=None, old_prices_path=None, seen=None):
@@ -87,12 +90,21 @@ class State:
             state.heartbeat = seen["__heartbeat__"]
         return state
 
+    def user(self, user_id, name=""):
+        u = self.users.setdefault(str(user_id), {"watch": [], "hide": []})
+        if name:
+            u["name"] = name
+        u.setdefault("watch", [])
+        u.setdefault("hide", [])
+        return u
+
     def save(self, path=None):
         path = path or config.STATE_FILE
         self.market.prune()
         data = {"market_version": self.MARKET_VERSION, "market": self.market.to_dict(),
                 "telegram_offset": self.telegram_offset,
                 "overrides": self.overrides, "heartbeat": self.heartbeat, "last_run": self.last_run,
-                "fail_streak": self.fail_streak, "query_offset": self.query_offset}
+                "fail_streak": self.fail_streak, "query_offset": self.query_offset,
+                "users": self.users}
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, separators=(",", ":"))

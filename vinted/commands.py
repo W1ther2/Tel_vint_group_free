@@ -82,6 +82,59 @@ def _stats_text(state):
     return "\n".join(lines)
 
 
+def handle_callback(cb, state):
+    """Mygtuko paspaudimas. Atsakyma mato tik paspaudes vartotojas."""
+    data = cb.get("data") or ""
+    user = state.user(cb.get("user"), cb.get("name"))
+    kind, _, value = data.partition("|")
+    if not value:
+        return "Nežinomas mygtukas"
+
+    if kind == "w":                                   # sekti modeli
+        if value in user["watch"]:
+            user["watch"].remove(value)
+            return f"🔕 Nebesiųsiu asmeniškai apie iPhone {value}"
+        user["watch"].append(value)
+        if user.get("chat"):
+            return f"🔔 Siųsiu tau asmeniškai apie kiekvieną iPhone {value} sandorį"
+        return (f"🔔 Įsiminta: iPhone {value}. Kad gautum žinutes asmeniškai, "
+                "parašyk man privačiai /start")
+
+    if kind == "h":                                   # slepti pardaveja
+        if value in user["hide"]:
+            user["hide"].remove(value)
+            return "👁 Šio pardavėjo skelbimai vėl bus siunčiami"
+        user["hide"].append(value)
+        return "🙈 Šio pardavėjo skelbimų tau asmeniškai nebesiųsiu"
+
+    return "Nežinomas mygtukas"
+
+
+PRIVATE_HELP = """👋 Sveikas! Čia gali gauti skelbimus asmeniškai.
+
+Grupėje po kortele spausk 🔔 <b>Sekti šį modelį</b> – tuos skelbimus siųsiu tau čia.
+
+/mano – ką seki
+/stop – nebesiųsti asmeniškai"""
+
+
+def handle_private(msg, state):
+    """Komandos privačiame pokalbyje su botu (kiekvienam vartotojui atskirai)."""
+    cmd = re.sub(r"^/(\w+).*", r"\1", msg.get("text", "").strip().split("@")[0]).lower()
+    user = state.user(msg.get("user"), msg.get("name"))
+    if cmd in ("start", "pagalba", "help"):
+        user["chat"] = msg.get("chat")
+        return PRIVATE_HELP
+    if cmd == "mano":
+        watch = ", ".join(f"iPhone {m}" for m in user["watch"]) or "nieko"
+        return (f"<b>Tavo nustatymai</b>\nSeki: {watch}\n"
+                f"Asmeninės žinutės: {'įjungtos' if user.get('chat') else 'išjungtos (/start)'}")
+    if cmd == "stop":
+        user["chat"] = None
+        return "⏹ Asmeniškai nebesiųsiu. Įjungti – /start"
+    return PRIVATE_HELP
+
+
 def handle(text, state):
     """Ivykdo komanda. Grazina atsakymo teksta (HTML) arba None, jei komanda nezinoma."""
     text = text.strip()

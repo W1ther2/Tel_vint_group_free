@@ -27,8 +27,20 @@ class Run:
         self.tg = telegram
         self.sleep = sleep
         self.totals = {}
+        self.catalog_ids = {}
+        self.brand_ids = {}
         self.examples = []
         self.alerts = []
+
+    @staticmethod
+    def _count_id(item, kind, store):
+        val = item.get(f"{kind}_id")
+        if val is None:
+            nested = item.get(kind)
+            if isinstance(nested, dict):
+                val = nested.get("id")
+        if val is not None:
+            store[val] = store.get(val, 0) + 1
 
     def reject(self, reason, example=None):
         self.totals[reason] = self.totals.get(reason, 0) + 1
@@ -64,6 +76,9 @@ class Run:
             drop_from = prev
 
         model = detect_model(title)
+        if model:            # renkam ID tik tikriems telefonams – pagal juos nustatysim filtra
+            self._count_id(item, "catalog", self.catalog_ids)
+            self._count_id(item, "brand", self.brand_ids)
         if not model or is_accessory(title) or price is None:
             self.new_count += 0 if drop_from else 1
             self.new_seen[iid] = time.time()
@@ -157,7 +172,7 @@ class Run:
         full_url = config.BASE + url_path if url_path.startswith("/") else url_path
 
         deal = {
-            "id": iid, "model": model, "storage": storage, "title": title, "price": price,
+            "id": iid, "model": model, "seller_id": str(seller_id), "storage": storage, "title": title, "price": price,
             "url": full_url, "photo": get_photo_url(item, og), "description": description,
             "condition": condition, "battery": battery, "defects": [d for d, _ in defects],
             "quote": quote, "value": value, "discount": discount, "profit": profit,
@@ -170,15 +185,35 @@ class Run:
         return deal
 
     # --- visas paleidimas --------------------------------------------------------
+    def send_personal(self, deal):
+        """Asmenines zinutes tiems, kas paspaude 🔔 ties siuo modeliu."""
+        for uid, u in self.state.users.items():
+            chat = u.get("chat")
+            if not chat or deal["model"] not in (u.get("watch") or []):
+                continue
+            if deal.get("seller_id") and deal["seller_id"] in (u.get("hide") or []):
+                continue
+            self.tg.send_deal(deal, chat_id=chat)
+            print(f"     -> asmeniskai: {u.get('name') or uid}")
+
     def process_commands(self):
         if not config.cfg["TELEGRAM_COMMANDS"]:
             return
-        updates, offset = self.tg.get_updates(self.state.telegram_offset)
-        for _, text in updates:
-            reply = commands.handle(text, self.state)
-            if reply:
-                print(f"Komanda: {text[:50]}")
-                self.tg.send_message(reply)
+        messages, callbacks, offset = self.tg.get_updates(self.state.telegram_offset)
+        for m in messages:
+            if m["private"]:
+                reply = commands.handle_private(m, self.state)
+                print(f"Asmenine komanda ({m['name']}): {m['text'][:40]}")
+                self.tg.send_message(reply, chat_id=m["chat"])
+            else:
+                reply = commands.handle(m["text"], self.state)
+                if reply:
+                    print(f"Komanda: {m['text'][:50]}")
+                    self.tg.send_message(reply)
+        for cb in callbacks:
+            answer = commands.handle_callback(cb, self.state)
+            print(f"Mygtukas ({cb['name']}): {cb['data']} -> {answer[:40]}")
+            self.tg.answer_callback(cb["id"], answer)
         if offset != self.state.telegram_offset:
             self.state.telegram_offset = offset
             self.state.save()
@@ -240,6 +275,7 @@ class Run:
                 self.state.market.mark_alerted(deal["id"], deal["price"])
                 silent = deal["discount"] < c["LOUD_DISCOUNT"]
                 self.tg.send_deal(deal, silent=silent)
+                self.send_personal(deal)
                 tag = f"atpigo nuo {deal['drop_from']:.0f}, " if deal["drop_from"] else ""
                 print(f"  -> iPhone {deal['model']} {deal['price']:.0f} EUR ({tag}-{deal['discount']:.0%}"
                       f"{', tyliai' if silent else ''}): {deal['title'][:45]}")
@@ -255,6 +291,7 @@ class Run:
             self.check_sold()
 
         self.print_market()
+        self.print_ids()
         summary = ", ".join(f"{k}: {n}" for k, n in sorted(self.totals.items(), key=lambda kv: -kv[1]))
         print(f"IS VISO: gauta {fetched}, tinkama {len(self.alerts)}. Atmesta – {summary}")
         self.heartbeat(fetched, summary)
@@ -277,6 +314,15 @@ class Run:
         save_seen(self.new_seen)
 
         print(f"Issiusta {len(self.alerts)} alert'u." if self.alerts else "Nauju deal'u nera.")
+
+    def print_ids(self):
+        """Padeda uzpildyti CATALOG_IDS / BRAND_IDS config.json faile."""
+        for name, store, key in (("kategorijos", self.catalog_ids, "CATALOG_IDS"),
+                                 ("prekes zenklai", self.brand_ids, "BRAND_IDS")):
+            top = sorted(store.items(), key=lambda kv: -kv[1])[:5]
+            if top:
+                pairs = ", ".join(f"{i} ({n} telef.)" for i, n in top)
+                print(f"Daznos {name}: {pairs}   -> config.json \"{key}\": [{top[0][0]}]")
 
     def print_market(self):
         manual = config.market_prices()

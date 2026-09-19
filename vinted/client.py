@@ -69,6 +69,7 @@ class VintedClient:
         self._user_cache = {}
         self._printed_first_item = False
         self.blocked_queries = 0        # kiek paieskų is eiles Vinted atmete (403)
+        self.filters_off = False        # True, kai kategoriju filtras neveikia (grazina 0 skelbimu)
 
     # --- sesija ---------------------------------------------------------
     @staticmethod
@@ -131,6 +132,7 @@ class VintedClient:
         wait = config.cfg["SLEEP_SECONDS"]
         params = {"search_text": query, "order": "newest_first", "per_page": 96,
                   "page": page, "currency": "EUR"}
+        params.update(self.filter_params())
         short = url.split("//", 1)[-1]
         for attempt in range(1, max_retries + 1):
             try:
@@ -177,6 +179,20 @@ class VintedClient:
                 self.sleep(wait * attempt)
         return None
 
+    def filter_params(self):
+        """Kategorijos / prekes zenklo filtras (naujas API naudoja attribute_ids[...])."""
+        if self.filters_off:
+            return {}
+        c = config.cfg
+        params = {}
+        if c["CATALOG_IDS"]:
+            params["attribute_ids[catalog]"] = ",".join(str(x) for x in c["CATALOG_IDS"])
+            params["catalog_ids"] = ",".join(str(x) for x in c["CATALOG_IDS"])
+        if c["BRAND_IDS"]:
+            params["attribute_ids[brand]"] = ",".join(str(x) for x in c["BRAND_IDS"])
+            params["brand_ids"] = ",".join(str(x) for x in c["BRAND_IDS"])
+        return params
+
     def fetch_page(self, query, page):
         endpoints = [self.working_endpoint] if self.working_endpoint else CATALOG_ENDPOINTS
         first_error = None
@@ -199,6 +215,12 @@ class VintedClient:
         items, known = [], set()
         for page in range(1, pages + 1):
             batch = self.fetch_page(query, page)
+            if page == 1 and batch == [] and not self.filters_off and self.filter_params():
+                # filtras negrazino nieko – tikriausiai blogi ID; kartojam be filtro
+                self.filters_off = True
+                print("  ! Kategorijos/brando filtras negrazino nieko – toliau be filtro "
+                      "(patikrink CATALOG_IDS / BRAND_IDS).")
+                batch = self.fetch_page(query, page)
             if not batch:
                 if page == 1 and "403" in (self.last_error or ""):
                     self.blocked_queries += 1

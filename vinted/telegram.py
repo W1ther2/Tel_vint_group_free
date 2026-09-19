@@ -72,13 +72,13 @@ class Telegram:
     def _url(self, method):
         return f"https://api.telegram.org/bot{self.token}/{method}"
 
-    def send_message(self, text, silent=False):
+    def send_message(self, text, silent=False, chat_id=None):
         if config.cfg["DRY_RUN"]:
             print("[DRY_RUN] Telegram:", text.replace("\n", " | ")[:200])
             return True
         try:
             r = self.http.post(self._url("sendMessage"), data={
-                "chat_id": self.chat_id, "text": text, "parse_mode": "HTML",
+                "chat_id": chat_id or self.chat_id, "text": text, "parse_mode": "HTML",
                 "disable_web_page_preview": True, "disable_notification": silent}, timeout=15)
             if r.status_code != 200:
                 print(f"  ! Telegram klaida: {r.text[:150]}")
@@ -88,17 +88,25 @@ class Telegram:
             print(f"  ! Nepavyko issiusti Telegram: {e}")
             return False
 
-    def send_deal(self, deal, silent=False):
-        """Kortele su nuotrauka ir mygtuku. Jei nuotrauka nesiuncia – tekstu."""
+    @staticmethod
+    def deal_keyboard(deal):
+        """Mygtukai po kortele. Antros eiles mygtukai veikia kiekvienam vartotojui
+        atskirai (Telegram pasako, kas paspaude, o botas atsako tik jam)."""
+        rows = [[{"text": "🛒 Atidaryti Vinted", "url": deal["url"]}],
+                [{"text": "🔔 Sekti šį modelį", "callback_data": f"w|{deal['model']}"[:64]}]]
+        return json.dumps({"inline_keyboard": rows})
+
+    def send_deal(self, deal, silent=False, chat_id=None):
+        """Kortele su nuotrauka ir mygtukais. Jei nuotrauka nesiuncia – tekstu."""
         caption = format_card(deal)
         if config.cfg["DRY_RUN"]:
             print("[DRY_RUN] kortele:", caption.replace("\n", " | ")[:300])
             return True
-        keyboard = json.dumps({"inline_keyboard": [[{"text": "🛒 Atidaryti Vinted", "url": deal["url"]}]]})
+        keyboard = self.deal_keyboard(deal)
         if deal.get("photo"):
             try:
                 r = self.http.post(self._url("sendPhoto"), data={
-                    "chat_id": self.chat_id, "photo": deal["photo"], "caption": caption,
+                    "chat_id": chat_id or self.chat_id, "photo": deal["photo"], "caption": caption,
                     "parse_mode": "HTML", "reply_markup": keyboard, "disable_notification": silent},
                     timeout=20)
                 if r.status_code == 200:
@@ -109,26 +117,54 @@ class Telegram:
                 return True
             except Exception as e:
                 print(f"  ! Nepavyko issiusti nuotraukos: {e} – siunciu be nuotraukos")
-        return self.send_message(caption, silent=silent)
+        return self.send_message(caption, silent=silent, chat_id=chat_id)
 
     def get_updates(self, offset):
-        """Naujos zinutes is CHAT_ID pokalbio. Grazina ([(update_id, tekstas)], naujas_offset)."""
+        """Naujos komandos ir mygtuku paspaudimai.
+
+        Grazina (zinutes, paspaudimai, naujas_offset):
+          zinutes    – [{"text", "chat", "user", "name", "private"}]
+          paspaudimai– [{"data", "user", "name", "id"}]  (id = callback_query id)"""
         try:
             r = self.http.get(self._url("getUpdates"), params={
                 "offset": offset + 1 if offset else None, "timeout": 0,
-                "allowed_updates": json.dumps(["message"])}, timeout=15)
+                "allowed_updates": json.dumps(["message", "callback_query"])}, timeout=15)
             data = r.json()
         except Exception as e:
             print(f"  ! Nepavyko gauti Telegram komandu: {e}")
-            return [], offset
+            return [], [], offset
         if not data.get("ok"):
             print(f"  ! Telegram getUpdates: {str(data.get('description'))[:150]}")
-            return [], offset
-        out, new_offset = [], offset
+            return [], [], offset
+
+        messages, callbacks, new_offset = [], [], offset
         for upd in data.get("result", []):
             new_offset = max(new_offset, int(upd.get("update_id", 0)))
-            msg = upd.get("message") or {}
-            text = msg.get("text") or ""
-            if str((msg.get("chat") or {}).get("id")) == self.chat_id and text.startswith("/"):
-                out.append((upd["update_id"], text))
-        return out, new_offset
+            msg = upd.get("message")
+            cq = upd.get("callback_query")
+            if msg and (msg.get("text") or "").startswith("/"):
+                chat = msg.get("chat") or {}
+                user = msg.get("from") or {}
+                private = chat.get("type") == "private"
+                if private or str(chat.get("id")) == self.chat_id:
+                    messages.append({"text": msg["text"], "chat": str(chat.get("id")),
+                                     "user": str(user.get("id") or ""), "name": user.get("first_name") or "",
+                                     "private": private})
+            elif cq:
+                user = cq.get("from") or {}
+                callbacks.append({"data": cq.get("data") or "", "user": str(user.get("id") or ""),
+                                  "name": user.get("first_name") or "", "id": cq.get("id")})
+        return messages, callbacks, new_offset
+
+    def answer_callback(self, callback_id, text, alert=False):
+        """Atsakymas mato TIK paspaudes vartotojas."""
+        if config.cfg["DRY_RUN"]:
+            print("[DRY_RUN] atsakymas:", text[:120])
+            return True
+        try:
+            self.http.post(self._url("answerCallbackQuery"), data={
+                "callback_query_id": callback_id, "text": text[:200], "show_alert": alert}, timeout=15)
+            return True
+        except Exception as e:
+            print(f"  ! Nepavyko atsakyti i paspaudima: {e}")
+            return False
