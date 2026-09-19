@@ -14,6 +14,7 @@ HELP = """<b>Komandos</b>
 /nuolaida 20 – siųsti nuo 20% pigiau nei vertė
 /baterija 80 – min. baterija (0 – netikrinti)
 /garsas 30 – su garsu tik nuo 30% pigiau
+/rinka 50 – rinkos kaina = mediana (35 – pigesnis trečdalis, griežčiau)
 /tvarkingi taip|ne – tik tvarkingi telefonai
 /pauze – nesiųsti skelbimų, /testi – vėl siųsti
 /statistika – kodėl atmesti skelbimai (paskutinis paleidimas)
@@ -137,6 +138,14 @@ def handle(text, state):
             _set(state, "MIN_BATTERY", v)
             return "✅ Baterija netikrinama" if v == 0 else f"✅ Min. baterija: {v}%"
 
+        if cmd == "rinka":
+            v = _percent(args)
+            if not 0.1 <= v <= 0.9:
+                raise ValueError
+            _set(state, "MARKET_PERCENTILE", v)
+            return (f"✅ Rinkos kaina skaičiuojama kaip {v:.0%} percentilis "
+                    f"({'mediana' if abs(v - 0.5) < 0.01 else 'pigesnė dalis' if v < 0.5 else 'brangesnė dalis'})")
+
         if cmd == "garsas":
             v = _percent(args)
             _set(state, "LOUD_DISCOUNT", v)
@@ -160,6 +169,7 @@ def handle(text, state):
             manual = config.market_prices()
             return ("<b>Nustatymai</b>\n"
                     f"Min. nuolaida: {c['MIN_DISCOUNT']:.0%}\n"
+                    f"Rinkos kaina: {c['MARKET_PERCENTILE']:.0%} percentilis\n"
                     f"Su garsu nuo: {c['LOUD_DISCOUNT']:.0%}\n"
                     f"Min. baterija: {c['MIN_BATTERY'] or 'netikrinama'}\n"
                     f"Tik tvarkingi: {'taip' if c.get('TIDY_ONLY') else 'ne'}\n"

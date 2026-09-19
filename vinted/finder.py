@@ -209,9 +209,12 @@ class Run:
         self.new_seen.pop("__heartbeat__", None)
         fetched, self.new_count = 0, 0
 
+        pages = c["PAGES"] if seen else max(c["PAGES"], c["FULL_SCAN_PAGES"])
+        if not seen:
+            print(f"seen.json tuscias – pilnas perziurejimas ({pages} psl. kiekvienai paieskai)")
         for q in c["SEARCH_QUERIES"]:
             print(f"Tikrinama: '{q}'...")
-            items = self.client.fetch_items(q, c["PAGES"], seen)
+            items = self.client.fetch_items(q, pages, seen)
             fetched += len(items)
             drops = self.state.market.observe(items)
             self.examples, sent_before = [], len(self.alerts)
@@ -245,13 +248,22 @@ class Run:
         self.heartbeat(fetched, summary)
         self.state.last_run = {"time": int(time.time()), "fetched": fetched, "new": self.new_count,
                                "sent": len(self.alerts), "totals": self.totals}
+        if fetched == 0:
+            self.state.fail_streak += 1
+            print(f"! Negauta skelbimu ({self.state.fail_streak} paleidimas is eiles): {self.client.last_error}")
+            # Vienkartinis 403 = laikinas Vinted blokas serverio IP; pranesam tik jei kartojasi
+            if self.state.fail_streak >= c["FAIL_ALERT_RUNS"]:
+                self.tg.send_message(
+                    f"<b>ISPEJIMAS</b>: {self.state.fail_streak} paleidimus is eiles negauta nei vieno "
+                    "skelbimo is Vinted.\nGalimai pasikeite API arba Vinted blokuoja – patikrink logus.\n"
+                    f"Priezastis: <code>{html.escape(self.client.last_error or 'nezinoma')}</code>")
+                self.state.fail_streak = 0
+        else:
+            self.state.fail_streak = 0
+
         self.state.save()
         save_seen(self.new_seen)
 
-        if fetched == 0:
-            self.tg.send_message("<b>ISPEJIMAS</b>: negauta nei vieno skelbimo is Vinted. "
-                                 "Galimai pasikeite API – patikrink skripto logus.\n"
-                                 f"Priezastis: <code>{html.escape(self.client.last_error or 'nezinoma')}</code>")
         print(f"Issiusta {len(self.alerts)} alert'u." if self.alerts else "Nauju deal'u nera.")
 
     def print_market(self):

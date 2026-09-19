@@ -94,8 +94,21 @@ class VintedClient:
             h["Accept"] = "text/html,application/xhtml+xml,*/*"
         return h
 
-    def start(self):
+    def start(self, attempts=3):
+        """Vinted kartais laikinai blokuoja serverio IP (403) – bandom kelis kartus."""
+        for attempt in range(1, attempts + 1):
+            self._start_once()
+            if not self.last_error or "403" not in self.last_error:
+                return
+            if attempt < attempts:
+                wait = 10 * attempt
+                print(f"  ! Vinted laikinai blokuoja (403) – laukiu {wait}s ir bandau dar karta "
+                      f"({attempt}/{attempts})...")
+                self.sleep(wait)
+
+    def _start_once(self):
         self.session = self._factory()
+        self.last_error = ""
         try:
             r = self.session.get(BASE + "/", headers=self.headers(json_api=False), timeout=20)
             print(f"Sesija pradeta (statusas {r.status_code})")

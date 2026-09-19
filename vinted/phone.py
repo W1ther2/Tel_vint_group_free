@@ -259,7 +259,7 @@ CONDITION_FACTOR = {
 
 def battery_factor(battery):
     if battery is None:
-        return 0.96
+        return 0.98                     # dauguma nenurodo – beveik nebaudziam
     if battery >= 95:
         return 1.03
     if battery >= 90:

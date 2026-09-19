@@ -23,7 +23,7 @@ DEFAULTS = {
     ],
 
     # --- Kas yra "gera kaina" ---
-    "MIN_DISCOUNT": 0.15,            # bent 15% pigiau nei telefono verte
+    "MIN_DISCOUNT": 0.10,            # bent 10% pigiau nei telefono verte
     "HARD_MIN_PRICE_RATIO": 0.40,    # pigiau nei 40% rinkos – beveik visada sugedes/dalims/ne telefonas, atmetama
     "SUSPICIOUS_PRICE_RATIO": 0.55,  # pigiau nei 55% rinkos – siunciama, bet pazymima rizika
     "MIN_BATTERY": 0,                # min. baterijos % (0 = netikrinti)
@@ -42,7 +42,7 @@ DEFAULTS = {
     "SOLD_CHECK_AFTER_DAYS": 2,      # tikrinti skelbimus, kuriu kataloge nematem bent tiek dienu
     "MIN_SAMPLES": 8,                # kiek prasomu kainu reikia rinkos kainai
     "USE_TYPICAL_FALLBACK": True,    # kai duomenu per mazai – naudoti apytiksle kaina (retiems modeliams)
-    "MARKET_PERCENTILE": 0.35,       # prasomu kainu percentilis (0.5 = mediana)
+    "MARKET_PERCENTILE": 0.5,        # prasomu kainu percentilis (0.5 = mediana, 0.35 = pigesnis trecdalis)
     "PRICE_HISTORY_DAYS": 30,
     "SOLD_HISTORY_DAYS": 60,
     "PRICE_HISTORY_MAX_ITEMS": 12000,
@@ -61,6 +61,7 @@ DEFAULTS = {
     "LOUD_DISCOUNT": 0.30,           # nuo tiek pigiau – su garsu, maziau – tyliai
     "TELEGRAM_COMMANDS": True,       # leisti keisti nustatymus komandomis Telegram'e
     "HEARTBEAT_HOURS": 24,
+    "FAIL_ALERT_RUNS": 3,            # po kiek nesekmingu paleidimu is eiles pranesti apie problema
 
     # --- Priedu atpazinimas (pirmas pavadinimo zodis) ---
     "ACCESSORY_FIRST_WORDS": [
@@ -80,7 +81,8 @@ DEFAULTS = {
     "ALLOWED_LANGUAGES": ["LT", "EN"],
 
     # --- Veikimas ---
-    "PAGES": 3,
+    "PAGES": 3,                      # puslapiu (po 96 skelb.) kiekvienai paieskai iprastai
+    "FULL_SCAN_PAGES": 15,           # kai seen.json tuscias (pirmas/pilnas paleidimas) – perziureti daugiau
     "SLEEP_SECONDS": 3,
     "DETAIL_SLEEP_SECONDS": 1.0,
     "DRY_RUN": False,
@@ -119,7 +121,8 @@ def load(path=CONFIG_FILE):
 
 
 # Raktai, kuriuos galima keisti Telegram komandomis
-OVERRIDABLE = {"MIN_DISCOUNT", "MIN_BATTERY", "LOUD_DISCOUNT", "MARKET_PRICES", "PAUSED", "TIDY_ONLY"}
+OVERRIDABLE = {"MIN_DISCOUNT", "MIN_BATTERY", "LOUD_DISCOUNT", "MARKET_PRICES", "PAUSED", "TIDY_ONLY",
+               "MARKET_PERCENTILE"}
 
 
 def apply_overrides(overrides):
