@@ -64,6 +64,28 @@ class ClientTest(unittest.TestCase):
         self.assertTrue(looks_newest_first(page1))
         self.assertFalse(looks_newest_first(list(reversed(page1))))
 
+    def test_category_filter_and_fallback(self):
+        reset_config(SLEEP_SECONDS=0, CATALOG_IDS=[2342], BRAND_IDS=[12])
+        seen_params = []
+
+        def handler(url, params, headers):
+            seen_params.append(params)
+            if url.endswith(".lt/"):
+                return Resp(200, text="ok")
+            # su filtru – tuscia, be filtro – yra skelbimu
+            if "attribute_ids[catalog]" in params:
+                return Resp(200, {"items": []})
+            return Resp(200, {"items": [item(1, "iPhone 13", 200)]} if params["page"] == 1 else {"items": []})
+
+        sess = FakeSession(handler)
+        c = VintedClient(session_factory=lambda: sess, sleep=lambda s: None)
+        c.session = sess
+        items = quiet(c.fetch_items, "iPhone 13", 2)
+        self.assertEqual(seen_params[0]["attribute_ids[catalog]"], "2342")
+        self.assertEqual(seen_params[0]["brand_ids"], "12")
+        self.assertTrue(c.filters_off)
+        self.assertEqual([i["id"] for i in items], [1])
+
     def test_403_backoff_and_blocked_counter(self):
         reset_config(SLEEP_SECONDS=0, BLOCK_BACKOFF_SECONDS=[0, 0, 0])
         waits = []
@@ -124,14 +146,29 @@ class TelegramTest(unittest.TestCase):
         quiet(Telegram("t", "42", http).send_deal, self.deal())
         self.assertEqual([m for m, _ in http.posts], ["sendPhoto", "sendMessage"])
 
-    def test_updates_only_from_chat(self):
+    def test_updates_messages_callbacks_and_private(self):
         data = {"ok": True, "result": [
-            {"update_id": 10, "message": {"chat": {"id": 42}, "text": "/kaina 13 180"}},
-            {"update_id": 11, "message": {"chat": {"id": 99}, "text": "/pauze"}},
+            {"update_id": 10, "message": {"chat": {"id": 42}, "from": {"id": 7, "first_name": "Vy"},
+                                          "text": "/kaina 13 180"}},
+            {"update_id": 11, "message": {"chat": {"id": 99, "type": "supergroup"}, "text": "/pauze"}},
             {"update_id": 12, "message": {"chat": {"id": 42}, "text": "labas"}},
+            {"update_id": 13, "message": {"chat": {"id": 555, "type": "private"},
+                                          "from": {"id": 7, "first_name": "Vy"}, "text": "/start"}},
+            {"update_id": 14, "callback_query": {"id": "abc", "data": "w|13 Pro",
+                                                 "from": {"id": 7, "first_name": "Vy"}}},
         ]}
-        ups, offset = Telegram("t", "42", FakeHttp(get_resp=Resp(200, data))).get_updates(0)
-        self.assertEqual((ups, offset), ([(10, "/kaina 13 180")], 12))
+        msgs, cbs, offset = Telegram("t", "42", FakeHttp(get_resp=Resp(200, data))).get_updates(0)
+        self.assertEqual([m["text"] for m in msgs], ["/kaina 13 180", "/start"])
+        self.assertTrue(msgs[1]["private"])
+        self.assertEqual((cbs[0]["data"], cbs[0]["user"], cbs[0]["id"]), ("w|13 Pro", "7", "abc"))
+        self.assertEqual(offset, 14)
+
+    def test_deal_keyboard_has_personal_buttons(self):
+        from vinted.telegram import Telegram as T
+        kb = json.loads(T.deal_keyboard({"model": "13 Pro", "url": "https://x", "seller_id": "99"}))
+        rows = kb["inline_keyboard"]
+        self.assertEqual(rows[0][0]["url"], "https://x")
+        self.assertEqual([b["callback_data"] for b in rows[1]], ["w|13 Pro"])
 
 
 if __name__ == "__main__":

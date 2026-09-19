@@ -52,21 +52,34 @@ class FakeClient:
 
 
 class FakeTelegram:
-    def __init__(self, updates=None):
-        self.deals, self.messages = [], []
-        self.updates = updates or []
+    def __init__(self, updates=None, callbacks=None, private=None):
+        self.deals, self.messages, self.answers = [], [], []
+        self.updates = updates or []            # [(update_id, tekstas)] – grupeje
+        self.callbacks = callbacks or []        # [(update_id, data, user, name)]
+        self.private = private or []            # [(update_id, tekstas, user, chat, name)]
 
-    def send_deal(self, deal, silent=False):
-        self.deals.append((deal, silent))
+    def send_deal(self, deal, silent=False, chat_id=None):
+        self.deals.append((deal, silent) if chat_id is None else (deal, chat_id))
         return True
 
-    def send_message(self, text, silent=False):
-        self.messages.append(text)
+    def send_message(self, text, silent=False, chat_id=None):
+        self.messages.append(text if chat_id is None else f"[{chat_id}] {text}")
+        return True
+
+    def answer_callback(self, callback_id, text, alert=False):
+        self.answers.append(text)
         return True
 
     def get_updates(self, offset):
-        ups = [(i, t) for i, t in self.updates if i > offset]
-        return ups, max([offset] + [i for i, _ in ups])
+        msgs = [{"text": t, "chat": "42", "user": "1", "name": "Testas", "private": False}
+                for i, t in self.updates if i > offset]
+        msgs += [{"text": t, "chat": chat, "user": u, "name": n, "private": True}
+                 for i, t, u, chat, n in self.private if i > offset]
+        cbs = [{"data": d, "user": u, "name": n, "id": f"cb{i}"}
+               for i, d, u, n in self.callbacks if i > offset]
+        ids = ([i for i, _ in self.updates] + [i for i, *_ in self.callbacks]
+               + [i for i, *_ in self.private])
+        return msgs, cbs, max([offset] + ids)
 
 
 def market_items(n=20, base=1000, low=260, high=340):
@@ -147,6 +160,43 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(sorted(d["id"] for d, _ in tg.deals), ["5", "6"], log)
             quote = tg.deals[0][0]["quote"]
             self.assertGreater(quote.price, 100)                     # sugede/pigus nesugadino rinkos kainos
+
+    def test_collects_catalog_and_brand_ids(self):
+        reset_config(SEARCH_QUERIES=["iPhone 13"], HEARTBEAT_HOURS=0, MIN_SAMPLES=100)
+        with TempDir():
+            cat = [item(1, "iPhone 13 128GB", 200, catalog_id=2342, brand={"id": 12, "title": "Apple"}),
+                   item(2, "Dėklas iPhone 13", 10, catalog_id=9999, brand_id=77)]
+            log = run(FakeClient({"iPhone 13": cat}), FakeTelegram())
+            self.assertIn('"CATALOG_IDS": [2342]', log)
+            self.assertIn('"BRAND_IDS": [12]', log)
+
+    def test_personal_buttons_and_dm(self):
+        reset_config(SEARCH_QUERIES=["iPhone 13"], HEARTBEAT_HOURS=0, MIN_SAMPLES=8, MARKET_PERCENTILE=0.5)
+        with TempDir():
+            cat = market_items() + [item(1, "iPhone 13 128GB", 180, user_id=7)]
+            client = FakeClient({"iPhone 13": cat})
+            # 1) vartotojas paspaudzia "Sekti si modeli" ir parasoma botui privaciai
+            tg = FakeTelegram(callbacks=[(5, "w|13", "77", "Vy")],
+                              private=[(6, "/start", "77", "555", "Vy")])
+            run(client, tg)
+            self.assertTrue(any("Įsiminta" in a or "Siųsiu" in a for a in tg.answers))
+            users = read_json("state.json")["users"]
+            self.assertEqual(users["77"]["watch"], ["13"])
+            self.assertEqual(users["77"]["chat"], "555")
+
+            # 2) naujas sandoris – ateina ir i grupe, ir asmeniskai
+            client.catalog["iPhone 13"] = cat + [item(2, "iPhone 13 128GB", 175, user_id=8)]
+            tg2 = FakeTelegram()
+            run(client, tg2)
+            targets = [t for _, t in tg2.deals]
+            self.assertIn("555", targets)                      # asmenine zinute
+            self.assertIn(False, targets)                      # grupes zinute (silent=False)
+
+            # 3) sekimą galima išjungti tuo pačiu mygtuku
+            tg3 = FakeTelegram(callbacks=[(9, "w|13", "77", "Vy")])
+            client.catalog["iPhone 13"] = cat + [item(3, "iPhone 13 128GB", 170, user_id=9)]
+            run(client, tg3)
+            self.assertNotIn("555", [t for _, t in tg3.deals])
 
     def test_query_rotation(self):
         reset_config(SEARCH_QUERIES=["A", "B", "C"], HEARTBEAT_HOURS=0, ROTATE_QUERIES=True)

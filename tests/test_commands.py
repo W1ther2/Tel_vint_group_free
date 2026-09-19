@@ -58,6 +58,22 @@ class CommandsTest(unittest.TestCase):
         self.assertEqual(config.cfg["MARKET_PERCENTILE"], 0.5)
         self.assertIn("Neteisinga", commands.handle("/rinka 99", self.state))
 
+    def test_callbacks_and_private(self):
+        cb = {"data": "w|13 Pro", "user": "77", "name": "Vy", "id": "x"}
+        self.assertIn("13 Pro", commands.handle_callback(cb, self.state))
+        self.assertEqual(self.state.users["77"]["watch"], ["13 Pro"])
+        self.assertIn("Nebesiųsiu", commands.handle_callback(cb, self.state))   # perjungia atgal
+        hide = {"data": "h|555", "user": "77", "name": "Vy", "id": "x"}
+        commands.handle_callback(hide, self.state)
+        self.assertEqual(self.state.users["77"]["hide"], ["555"])
+
+        start = {"text": "/start", "user": "77", "chat": "999", "name": "Vy", "private": True}
+        self.assertIn("Sveikas", commands.handle_private(start, self.state))
+        self.assertEqual(self.state.users["77"]["chat"], "999")
+        self.assertIn("Seki:", commands.handle_private({**start, "text": "/mano"}, self.state))
+        commands.handle_private({**start, "text": "/stop"}, self.state)
+        self.assertIsNone(self.state.users["77"]["chat"])
+
     def test_bad_input(self):
         self.assertIn("Neteisinga", commands.handle("/nuolaida daug", self.state))
         self.assertIsNone(commands.handle("/nezinoma", self.state))
