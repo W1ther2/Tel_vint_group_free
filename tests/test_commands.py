@@ -47,6 +47,12 @@ class CommandsTest(unittest.TestCase):
         self.assertIn("per brangu: <b>400</b>", text)
         self.assertIn("/nuolaida 10", text)
 
+    def test_profit_toggle(self):
+        self.assertIn("nebebus", commands.handle("/pelnas ne", self.state))
+        self.assertFalse(config.cfg["SHOW_PROFIT"])
+        commands.handle("/pelnas taip", self.state)
+        self.assertTrue(config.cfg["SHOW_PROFIT"])
+
     def test_market_percentile(self):
         self.assertIn("mediana", commands.handle("/rinka 50", self.state))
         self.assertEqual(config.cfg["MARKET_PERCENTILE"], 0.5)
