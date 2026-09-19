@@ -198,6 +198,13 @@ class FlowTest(unittest.TestCase):
             run(client, tg3)
             self.assertNotIn("555", [t for _, t in tg3.deals])
 
+    def test_time_limit_stops_run(self):
+        reset_config(SEARCH_QUERIES=["A", "B", "C"], HEARTBEAT_HOURS=0, MAX_RUN_MINUTES=1e-9)
+        with TempDir():
+            client = FakeClient({"A": [], "B": [], "C": []})
+            log = run(client, FakeTelegram())
+            self.assertIn("laiko limitas", log)
+
     def test_query_rotation(self):
         reset_config(SEARCH_QUERIES=["A", "B", "C"], HEARTBEAT_HOURS=0, ROTATE_QUERIES=True)
         with TempDir():
