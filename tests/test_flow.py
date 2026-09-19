@@ -108,7 +108,7 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(sent["2"][0]["battery"], 91)
             self.assertGreater(sent["2"][0]["profit"], 0)
             for reason in ["neveikiantis / užrakintas / netestuotas", "ne telefonas / kitas modelis", "kalba", "salis",
-                           "per pigu šiam modeliui (dėžutė / dalys?)"]:
+                           "per pigu (sugedęs / dalims / ne telefonas?)"]:
                 self.assertIn(reason, log)
             state = read_json("state.json")
             self.assertEqual(state["market"]["items"]["2"]["a"], 180)
