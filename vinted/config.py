@@ -67,6 +67,9 @@ DEFAULTS = {
     # --- Pranesimai ---
     "LOUD_DISCOUNT": 0.30,           # nuo tiek pigiau – su garsu, maziau – tyliai
     "TELEGRAM_COMMANDS": True,       # leisti keisti nustatymus komandomis Telegram'e
+    # Kas gali keisti nustatymus. Tuscia = niekas (komandos grupeje ignoruojamos).
+    # Savo ID suzinosi parases botui privaciai /start.
+    "ADMIN_IDS": [],
     "HEARTBEAT_HOURS": 24,
     "FAIL_ALERT_RUNS": 3,            # po kiek nesekmingu paleidimu is eiles pranesti apie problema
 

@@ -82,6 +82,11 @@ def _stats_text(state):
     return "\n".join(lines)
 
 
+def is_admin(user_id):
+    admins = [str(x) for x in (config.cfg.get("ADMIN_IDS") or [])]
+    return str(user_id) in admins
+
+
 def handle_callback(cb, state):
     """Mygtuko paspaudimas. Atsakyma mato tik paspaudes vartotojas."""
     data = cb.get("data") or ""
@@ -119,12 +124,19 @@ Grupėje po kortele spausk 🔔 <b>Sekti šį modelį</b> – tuos skelbimus si�
 
 
 def handle_private(msg, state):
-    """Komandos privačiame pokalbyje su botu (kiekvienam vartotojui atskirai)."""
-    cmd = re.sub(r"^/(\w+).*", r"\1", msg.get("text", "").strip().split("@")[0]).lower()
+    """Komandos privačiame pokalbyje su botu (kiekvienam vartotojui atskirai).
+    Administratoriui cia veikia ir visos nustatymu komandos."""
+    text = msg.get("text", "").strip()
+    cmd = re.sub(r"^/(\w+).*", r"\1", text.split("@")[0]).lower()
     user = state.user(msg.get("user"), msg.get("name"))
     if cmd in ("start", "pagalba", "help"):
         user["chat"] = msg.get("chat")
-        return PRIVATE_HELP
+        extra = "\n\n<b>Administratoriaus komandos</b>\n" + HELP if is_admin(msg.get("user")) else ""
+        return f"{PRIVATE_HELP}\n\n<i>Tavo ID: {msg.get('user')}</i>{extra}"
+    if is_admin(msg.get("user")) and cmd not in ("mano", "stop"):
+        reply = handle(text, state)     # nustatymu komandos – tik privaciai ir tik adminui
+        if reply:
+            return reply
     if cmd == "mano":
         watch = ", ".join(f"iPhone {m}" for m in user["watch"]) or "nieko"
         return (f"<b>Tavo nustatymai</b>\nSeki: {watch}\n"

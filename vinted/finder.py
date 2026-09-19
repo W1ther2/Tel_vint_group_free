@@ -210,11 +210,14 @@ class Run:
                 reply = commands.handle_private(m, self.state)
                 print(f"Asmenine komanda ({m['name']}): {m['text'][:40]}")
                 self.tg.send_message(reply, chat_id=m["chat"])
-            else:
+            elif commands.is_admin(m["user"]):
                 reply = commands.handle(m["text"], self.state)
                 if reply:
-                    print(f"Komanda: {m['text'][:50]}")
+                    print(f"Komanda ({m['name']}): {m['text'][:50]}")
                     self.tg.send_message(reply)
+            else:
+                # Grupeje komandos is kitu zmoniu ignoruojamos – nieko neatskleidziam
+                print(f"Ignoruota komanda grupeje ({m['name']}): {m['text'][:40]}")
         for cb in callbacks:
             answer = commands.handle_callback(cb, self.state)
             print(f"Mygtukas ({cb['name']}): {cb['data']} -> {answer[:40]}")
