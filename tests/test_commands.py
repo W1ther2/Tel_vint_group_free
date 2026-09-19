@@ -58,6 +58,15 @@ class CommandsTest(unittest.TestCase):
         self.assertEqual(config.cfg["MARKET_PERCENTILE"], 0.5)
         self.assertIn("Neteisinga", commands.handle("/rinka 99", self.state))
 
+    def test_admin_only_settings_in_private(self):
+        config.cfg["ADMIN_IDS"] = ["77"]
+        start = {"text": "/start", "user": "77", "chat": "999", "name": "Vy", "private": True}
+        self.assertIn("Tavo ID: 77", commands.handle_private(start, self.state))
+        self.assertIn("rinkos kaina 180", commands.handle_private({**start, "text": "/kaina 13 180"}, self.state))
+        kitas = {"text": "/kaina 13 500", "user": "5", "chat": "5", "name": "X", "private": True}
+        self.assertNotIn("500", commands.handle_private(kitas, self.state))
+        self.assertEqual(config.market_prices()["13"], 180)
+
     def test_callbacks_and_private(self):
         cb = {"data": "w|13 Pro", "user": "77", "name": "Vy", "id": "x"}
         self.assertIn("13 Pro", commands.handle_callback(cb, self.state))

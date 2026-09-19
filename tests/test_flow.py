@@ -198,6 +198,13 @@ class FlowTest(unittest.TestCase):
             run(client, tg3)
             self.assertNotIn("555", [t for _, t in tg3.deals])
 
+    def test_group_commands_only_for_admin(self):
+        reset_config(SEARCH_QUERIES=["iPhone 13"], HEARTBEAT_HOURS=0, ADMIN_IDS=["999"])
+        with TempDir():
+            tg = FakeTelegram(updates=[(5, "/pagalba")])       # rasys ne adminas (user "1")
+            run(FakeClient({"iPhone 13": []}), tg)
+            self.assertEqual([m for m in tg.messages if "/kaina" in m], [])
+
     def test_time_limit_stops_run(self):
         reset_config(SEARCH_QUERIES=["A", "B", "C"], HEARTBEAT_HOURS=0, MAX_RUN_MINUTES=1e-9)
         with TempDir():
@@ -255,6 +262,7 @@ class FlowTest(unittest.TestCase):
     def test_commands_and_pause(self):
         with TempDir():
             client = FakeClient({"iPhone 13": [item(1, "iPhone 13 128GB", 140)]})
+            reset_config(SEARCH_QUERIES=["iPhone 13"], HEARTBEAT_HOURS=0, MIN_SAMPLES=8, ADMIN_IDS=["1"])
             tg = FakeTelegram(updates=[(5, "/kaina 13 200"), (6, "/pauze")])
             log = run(client, tg)
             self.assertEqual(tg.deals, [])
