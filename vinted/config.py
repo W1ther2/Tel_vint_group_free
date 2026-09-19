@@ -86,9 +86,12 @@ DEFAULTS = {
     "ALLOWED_LANGUAGES": ["LT", "EN"],
 
     # --- Veikimas ---
+    "ROTATE_QUERIES": True,          # kiekviena paleidima pradeti nuo kito modelio (tolygesnis greitis)
     "PAGES": 2,                      # puslapiu (po 96 skelb.) kiekvienai paieskai iprastai
     "FULL_SCAN_PAGES": 10,           # kai seen.json tuscias (pirmas/pilnas paleidimas) – perziureti daugiau
-    "SLEEP_SECONDS": 2,
+    "SLEEP_SECONDS": 3,
+    "BLOCK_BACKOFF_SECONDS": [30, 60, 120],   # pauzes, kai Vinted blokuoja (403)
+    "STOP_AFTER_BLOCKED_QUERIES": 3,          # po tiek is eiles blokuotu paiesku – baigti paleidima
     "DETAIL_SLEEP_SECONDS": 1.0,
     "DRY_RUN": False,
     "PAUSED": False,                 # True = skelbimai nesiunciami (Telegram /pauze)

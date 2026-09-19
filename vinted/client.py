@@ -68,6 +68,7 @@ class VintedClient:
         self.last_error = ""
         self._user_cache = {}
         self._printed_first_item = False
+        self.blocked_queries = 0        # kiek paieskų is eiles Vinted atmete (403)
 
     # --- sesija ---------------------------------------------------------
     @staticmethod
@@ -136,10 +137,16 @@ class VintedClient:
                 resp = self.session.get(url, params=params, headers=self.headers(), timeout=20)
                 code = resp.status_code
                 if code in (401, 403):
+                    # Vinted laikinai blokuoja serverio IP – tik nauja sesija nepadeda,
+                    # reikia ilgesnes pauzes (30 s, 60 s, 120 s).
                     self.last_error = f"HTTP {code} ({short}): {short_body(resp.text)}"
-                    print(f"  ! {code} – atnaujinu sesija (bandymas {attempt}/{max_retries})...")
-                    self.start()
-                    self.sleep(wait)
+                    backoff = config.cfg["BLOCK_BACKOFF_SECONDS"]
+                    pause = backoff[min(attempt - 1, len(backoff) - 1)]
+                    print(f"  ! {code} – Vinted blokuoja, laukiu {pause}s "
+                          f"(bandymas {attempt}/{max_retries})...")
+                    self.sleep(pause)
+                    if attempt == max_retries - 1:
+                        self.start(attempts=1)      # paskutinis bandymas – dar ir nauja sesija
                     continue
                 if code == 429:
                     self.last_error = f"HTTP 429 ({short}): per daug uzklausu"
@@ -193,7 +200,10 @@ class VintedClient:
         for page in range(1, pages + 1):
             batch = self.fetch_page(query, page)
             if not batch:
+                if page == 1 and "403" in (self.last_error or ""):
+                    self.blocked_queries += 1
                 break
+            self.blocked_queries = 0
             for b in batch:
                 if isinstance(b, dict) and str(b.get("id")) not in known:
                     known.add(str(b.get("id")))

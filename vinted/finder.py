@@ -212,7 +212,20 @@ class Run:
         pages = c["PAGES"] if seen else max(c["PAGES"], c["FULL_SCAN_PAGES"])
         if not seen:
             print(f"seen.json tuscias – pilnas perziurejimas ({pages} psl. kiekvienai paieskai)")
-        for q in c["SEARCH_QUERIES"]:
+
+        # Kad tie patys modeliai nebutu visada tikrinami paskutiniai (ir apie ju
+        # dealus suzinotum veliausiai), kiekviena paleidima pradedam nuo kito modelio.
+        queries = list(c["SEARCH_QUERIES"])
+        if c["ROTATE_QUERIES"] and queries:
+            start = self.state.query_offset % len(queries)
+            queries = queries[start:] + queries[:start]
+            self.state.query_offset = (start + max(1, len(queries) // 3)) % len(queries)
+            print(f"Pradedama nuo: '{queries[0]}'")
+        for q in queries:
+            if self.client.blocked_queries >= c["STOP_AFTER_BLOCKED_QUERIES"]:
+                print(f"! Vinted blokuoja uzklausas ({self.client.blocked_queries} paieskos is eiles) – "
+                      "baigiu si paleidima, tesim kitame.")
+                break
             print(f"Tikrinama: '{q}'...")
             items = self.client.fetch_items(q, pages, seen)
             fetched += len(items)
