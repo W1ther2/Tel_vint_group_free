@@ -64,6 +64,18 @@ class ClientTest(unittest.TestCase):
         self.assertTrue(looks_newest_first(page1))
         self.assertFalse(looks_newest_first(list(reversed(page1))))
 
+    def test_403_backoff_and_blocked_counter(self):
+        reset_config(SLEEP_SECONDS=0, BLOCK_BACKOFF_SECONDS=[0, 0, 0])
+        waits = []
+        sess = FakeSession(lambda url, p, h: Resp(200, text="ok") if url.endswith(".lt/")
+                           else Resp(403, text="<title>Blocked</title>"))
+        c = VintedClient(session_factory=lambda: sess, sleep=waits.append)
+        c.session = sess
+        quiet(c.fetch_items, "iPhone 13", 2)
+        self.assertEqual(c.blocked_queries, 1)
+        quiet(c.fetch_items, "iPhone 14", 2)
+        self.assertEqual(c.blocked_queries, 2)
+
     def test_all_fail_sets_error(self):
         sess = FakeSession(lambda url, p, h: Resp(404, text="<title>Nerasta</title>"))
         c = VintedClient(session_factory=lambda: sess, sleep=lambda s: None)

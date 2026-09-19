@@ -20,6 +20,8 @@ def write_json(path, data):
 
 
 class FakeClient:
+    blocked_queries = 0
+
     def __init__(self, catalog, pages=None, users=None, statuses=None):
         self.catalog = catalog            # query -> [items]
         self.pages = pages or {}          # item_id -> aprasymas
@@ -145,6 +147,16 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(sorted(d["id"] for d, _ in tg.deals), ["5", "6"], log)
             quote = tg.deals[0][0]["quote"]
             self.assertGreater(quote.price, 100)                     # sugede/pigus nesugadino rinkos kainos
+
+    def test_query_rotation(self):
+        reset_config(SEARCH_QUERIES=["A", "B", "C"], HEARTBEAT_HOURS=0, ROTATE_QUERIES=True)
+        with TempDir():
+            client = FakeClient({})
+            first = []
+            for _ in range(3):
+                log = run(client, FakeTelegram())
+                first.append(log.split("Tikrinama: '")[1].split("'")[0])
+            self.assertEqual(first, ["A", "B", "C"])
 
     def test_price_drop(self):
         with TempDir():
