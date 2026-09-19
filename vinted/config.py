@@ -18,8 +18,13 @@ API_BASE = "https://api.vinted.lt"
 DEFAULTS = {
     # --- Ka ieskoti ---
     "SEARCH_QUERIES": [
-        "iPhone 8", "iPhone X", "iPhone XR", "iPhone XS", "iPhone 11", "iPhone 12",
-        "iPhone 13", "iPhone 14", "iPhone 15", "iPhone 16", "iPhone 17", "iPhone Air",
+        "iPhone 8", "iPhone 8 Plus", "iPhone X", "iPhone XR", "iPhone XS", "iPhone XS Max",
+        "iPhone 11", "iPhone 11 Pro", "iPhone 11 Pro Max", "iPhone 12", "iPhone 12 mini",
+        "iPhone 12 Pro", "iPhone 12 Pro Max", "iPhone 13", "iPhone 13 mini", "iPhone 13 Pro",
+        "iPhone 13 Pro Max", "iPhone 14", "iPhone 14 Plus", "iPhone 14 Pro", "iPhone 14 Pro Max",
+        "iPhone 15", "iPhone 15 Plus", "iPhone 15 Pro", "iPhone 15 Pro Max", "iPhone 16",
+        "iPhone 16e", "iPhone 16 Plus", "iPhone 16 Pro", "iPhone 16 Pro Max", "iPhone 17",
+        "iPhone 17 Pro", "iPhone 17 Pro Max", "iPhone Air",
     ],
 
     # --- Kas yra "gera kaina" ---
@@ -81,9 +86,9 @@ DEFAULTS = {
     "ALLOWED_LANGUAGES": ["LT", "EN"],
 
     # --- Veikimas ---
-    "PAGES": 3,                      # puslapiu (po 96 skelb.) kiekvienai paieskai iprastai
-    "FULL_SCAN_PAGES": 15,           # kai seen.json tuscias (pirmas/pilnas paleidimas) – perziureti daugiau
-    "SLEEP_SECONDS": 3,
+    "PAGES": 2,                      # puslapiu (po 96 skelb.) kiekvienai paieskai iprastai
+    "FULL_SCAN_PAGES": 10,           # kai seen.json tuscias (pirmas/pilnas paleidimas) – perziureti daugiau
+    "SLEEP_SECONDS": 2,
     "DETAIL_SLEEP_SECONDS": 1.0,
     "DRY_RUN": False,
     "PAUSED": False,                 # True = skelbimai nesiunciami (Telegram /pauze)
