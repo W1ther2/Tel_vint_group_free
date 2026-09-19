@@ -92,6 +92,7 @@ DEFAULTS = {
     # ID suzinosi is log'o eilutes "Daznos kategorijos/brandai" po paleidimo.
     "CATALOG_IDS": [],               # pvz. [2342] – mobilieji telefonai
     "BRAND_IDS": [],                 # pvz. [12] – Apple
+    "MAX_RUN_MINUTES": 25,           # ilgiausias paleidimo laikas – po to sustoja ir tesia kitame
     "ROTATE_QUERIES": True,          # kiekviena paleidima pradeti nuo kito modelio (tolygesnis greitis)
     "PAGES": 2,                      # puslapiu (po 96 skelb.) kiekvienai paieskai iprastai
     "FULL_SCAN_PAGES": 10,           # kai seen.json tuscias (pirmas/pilnas paleidimas) – perziureti daugiau

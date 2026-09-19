@@ -23,6 +23,7 @@ SELLER_KEYS = ("country", "rating", "reviews", "sold", "account_age_days")
 
 class Run:
     def __init__(self, client, telegram, sleep=time.sleep):
+        self.started = time.time()
         self.client = client
         self.tg = telegram
         self.sleep = sleep
@@ -185,6 +186,10 @@ class Run:
         return deal
 
     # --- visas paleidimas --------------------------------------------------------
+    def out_of_time(self):
+        limit = config.cfg["MAX_RUN_MINUTES"]
+        return limit > 0 and (time.time() - self.started) / 60 >= limit
+
     def send_personal(self, deal):
         """Asmenines zinutes tiems, kas paspaude 🔔 ties siuo modeliu."""
         for uid, u in self.state.users.items():
@@ -222,6 +227,8 @@ class Run:
         c = config.cfg
         found = {"sold": 0, "gone": 0}
         for iid in self.state.market.sold_check_candidates():
+            if self.out_of_time():
+                break
             status, page, final_url = self.client.fetch_item_page(f"/items/{iid}")
             st = listing_status(status, page, final_url, iid)
             self.state.market.set_status(iid, st)
@@ -256,6 +263,10 @@ class Run:
             self.state.query_offset = (start + max(1, len(queries) // 3)) % len(queries)
             print(f"Pradedama nuo: '{queries[0]}'")
         for q in queries:
+            if self.out_of_time():
+                print(f"! Pasiektas laiko limitas ({c['MAX_RUN_MINUTES']} min.) – "
+                      "likusius modelius tikrinsiu kitame paleidime.")
+                break
             if self.client.blocked_queries >= c["STOP_AFTER_BLOCKED_QUERIES"]:
                 print(f"! Vinted blokuoja uzklausas ({self.client.blocked_queries} paieskos is eiles) – "
                       "baigiu si paleidima, tesim kitame.")
@@ -268,6 +279,8 @@ class Run:
             for item in items:
                 if not isinstance(item, dict) or not item.get("id"):
                     continue
+                if self.out_of_time():
+                    break
                 deal = self.evaluate(item, drops)
                 if not deal:
                     continue
