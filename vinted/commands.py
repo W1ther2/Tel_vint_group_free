@@ -15,6 +15,7 @@ HELP = """<b>Komandos</b>
 /baterija 80 – min. baterija (0 – netikrinti)
 /garsas 30 – su garsu tik nuo 30% pigiau
 /rinka 50 – rinkos kaina = mediana (35 – pigesnis trečdalis, griežčiau)
+/pelnas ne – nerodyti galimo pelno kortelėje
 /tvarkingi taip|ne – tik tvarkingi telefonai
 /pauze – nesiųsti skelbimų, /testi – vėl siųsti
 /statistika – kodėl atmesti skelbimai (paskutinis paleidimas)
@@ -138,6 +139,11 @@ def handle(text, state):
             _set(state, "MIN_BATTERY", v)
             return "✅ Baterija netikrinama" if v == 0 else f"✅ Min. baterija: {v}%"
 
+        if cmd == "pelnas":
+            v = args.lower() not in ("ne", "no", "0", "off", "isjungti", "nerodyti")
+            _set(state, "SHOW_PROFIT", v)
+            return "✅ Rodysiu galimą pelną" if v else "✅ Galimo pelno eilutės nebebus"
+
         if cmd == "rinka":
             v = _percent(args)
             if not 0.1 <= v <= 0.9:
@@ -173,6 +179,7 @@ def handle(text, state):
                     f"Su garsu nuo: {c['LOUD_DISCOUNT']:.0%}\n"
                     f"Min. baterija: {c['MIN_BATTERY'] or 'netikrinama'}\n"
                     f"Tik tvarkingi: {'taip' if c.get('TIDY_ONLY') else 'ne'}\n"
+                    f"Rodyti pelną: {'taip' if c.get('SHOW_PROFIT') else 'ne'}\n"
                     f"Pauzė: {'taip' if c.get('PAUSED') else 'ne'}\n"
                     f"Rankinės kainos: {', '.join(f'{k} = {v:.0f} €' for k, v in manual.items()) or 'nėra'}")
     except (ValueError, IndexError):

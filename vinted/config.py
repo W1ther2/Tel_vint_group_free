@@ -122,7 +122,7 @@ def load(path=CONFIG_FILE):
 
 # Raktai, kuriuos galima keisti Telegram komandomis
 OVERRIDABLE = {"MIN_DISCOUNT", "MIN_BATTERY", "LOUD_DISCOUNT", "MARKET_PRICES", "PAUSED", "TIDY_ONLY",
-               "MARKET_PERCENTILE"}
+               "MARKET_PERCENTILE", "SHOW_PROFIT"}
 
 
 def apply_overrides(overrides):
