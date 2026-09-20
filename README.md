@@ -1,6 +1,6 @@
 # Vinted iPhone deal finder
 
-Ieško iPhone 8 … 17 Pro Max, kurie pigesni už rinkos kainą, ir siunčia juos į Telegram.
+Ieško iPhone 8 … 17 Pro Max, kurie pigesni už rinkos kainą, ir siunčia juos į Telegram
 
 ## Failai
 
