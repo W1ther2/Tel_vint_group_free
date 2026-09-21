@@ -100,12 +100,12 @@ class FlowTest(unittest.TestCase):
     def test_deal_rejects_and_silent(self):
         with TempDir():
             cat = market_items() + [
-                item(1, "iPhone 13 128GB", 225, user_id=1),                 # ~20% -> tyliai
-                item(2, "iPhone 13 128GB", 180, user_id=2),                 # ~40% -> garsiai
+                item(1, "iPhone 13 128GB", 190, user_id=1),                 # ~20% -> tyliai
+                item(2, "iPhone 13 128GB", 150, user_id=2),                 # ~40% -> garsiai
                 item(3, "iPhone 13 128GB", 150, user_id=3),                 # iCloud -> atmesta
                 item(4, "Dėklas iPhone 13", 15, user_id=4),                 # priedas
                 item(5, "iPhone 13 128GB", 200, user_id=5),                 # lenkiskai
-                item(6, "iPhone 13 128GB", 210, user_id=6),                 # uzsienio pardavejas
+                item(6, "iPhone 13 128GB", 150, user_id=6),                 # uzsienio pardavejas
                 item(7, "iPhone 13 128GB", 30, user_id=7),                  # per pigu telefonui
             ]
             client = FakeClient({"iPhone 13": cat},
@@ -124,7 +124,7 @@ class FlowTest(unittest.TestCase):
                            "per pigu (sugedęs / dalims / ne telefonas?)"]:
                 self.assertIn(reason, log)
             state = read_json("state.json")
-            self.assertEqual(state["market"]["items"]["2"]["a"], 180)
+            self.assertEqual(state["market"]["items"]["2"]["a"], 150)
 
             # antras paleidimas – niekas nesiunciama pakartotinai
             tg2 = FakeTelegram()
@@ -173,7 +173,7 @@ class FlowTest(unittest.TestCase):
     def test_personal_buttons_and_dm(self):
         reset_config(SEARCH_QUERIES=["iPhone 13"], HEARTBEAT_HOURS=0, MIN_SAMPLES=8, MARKET_PERCENTILE=0.5)
         with TempDir():
-            cat = market_items() + [item(1, "iPhone 13 128GB", 180, user_id=7)]
+            cat = market_items() + [item(1, "iPhone 13 128GB", 150, user_id=7)]
             client = FakeClient({"iPhone 13": cat})
             # 1) vartotojas paspaudzia "Sekti si modeli" ir parasoma botui privaciai
             tg = FakeTelegram(callbacks=[(5, "w|13", "77", "Vy")],
@@ -185,7 +185,7 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(users["77"]["chat"], "555")
 
             # 2) naujas sandoris – ateina ir i grupe, ir asmeniskai
-            client.catalog["iPhone 13"] = cat + [item(2, "iPhone 13 128GB", 175, user_id=8)]
+            client.catalog["iPhone 13"] = cat + [item(2, "iPhone 13 128GB", 145, user_id=8)]
             tg2 = FakeTelegram()
             run(client, tg2)
             targets = [t for _, t in tg2.deals]
@@ -194,7 +194,7 @@ class FlowTest(unittest.TestCase):
 
             # 3) sekimą galima išjungti tuo pačiu mygtuku
             tg3 = FakeTelegram(callbacks=[(9, "w|13", "77", "Vy")])
-            client.catalog["iPhone 13"] = cat + [item(3, "iPhone 13 128GB", 170, user_id=9)]
+            client.catalog["iPhone 13"] = cat + [item(3, "iPhone 13 128GB", 140, user_id=9)]
             run(client, tg3)
             self.assertNotIn("555", [t for _, t in tg3.deals])
 
@@ -282,7 +282,7 @@ class FlowTest(unittest.TestCase):
     def test_sold_check_and_sold_prices(self):
         reset_config(SEARCH_QUERIES=["iPhone 13"], HEARTBEAT_HOURS=0, MIN_SAMPLES=100, MIN_SOLD_SAMPLES=3,
                      SOLD_CHECK_AFTER_DAYS=0, SOLD_CHECKS_PER_RUN=50,
-                     USE_TYPICAL_FALLBACK=False)
+                     USE_TYPICAL_FALLBACK=False, GONE_AS_SOLD=False)
         with TempDir():
             from vinted.util import today
             d = today() - 3

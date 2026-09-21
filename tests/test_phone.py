@@ -34,6 +34,13 @@ class ModelTest(unittest.TestCase):
         self.assertTrue(description_not_phone("TUŠČIOS DĖŽUTĖS EMPTY BOX KAINA GALUTINĖ"))
         self.assertTrue(description_not_phone("Kaina už visas 50€"))
         self.assertFalse(description_not_phone("Parduodu telefoną su originalia dėžute, 2 vnt. dėklų"))
+        # Vinted apgavyste – parduodamas tik lapas su nuotrauka
+        for text in ["( parduodama tik A4 lapas su siais vaizdais siuntoje rasite tik tai)",
+                     "Parduodama tik A4 lapas su šiais vaizdais, siuntoje rasite tik tai",
+                     "gausite tik nuotrauką, ne telefoną",
+                     "you are buying a picture, not the phone"]:
+            self.assertTrue(description_not_phone(text), text)
+        self.assertFalse(description_not_phone("Papildomų nuotraukų galiu atsiųsti, telefonas veikia"))
         self.assertEqual(min_price("13"), 90)
 
     def test_normalize(self):

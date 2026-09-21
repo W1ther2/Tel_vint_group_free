@@ -24,7 +24,8 @@ class MarketTest(unittest.TestCase):
         m = Market()
         m.observe([item(i, "iPhone 13 128GB", p) for i, p in enumerate([200, 220, 240], 1)], day=100)
         q = m.quote("13", "128 GB", day=100)
-        self.assertEqual((q.source, q.price, q.by_storage), ("skelbimai", 220, True))
+        self.assertEqual((q.source, q.by_storage), ("skelbimai", True))
+        self.assertAlmostEqual(q.price, 220 * config.cfg["ASKING_SALE_FACTOR"])
         m.set_status(1, "sold", day=100)
         m.set_status(2, "sold", day=100)
         q = m.quote("13", "128 GB", day=100)
@@ -36,6 +37,26 @@ class MarketTest(unittest.TestCase):
         self.assertEqual(m.quote("15", None, day=100).source, "apytikslė")
         config.cfg["USE_TYPICAL_FALLBACK"] = False
         self.assertIsNone(m.quote("15", None, day=100))
+
+    def test_stale_listings_excluded_from_market(self):
+        reset_config(MIN_SAMPLES=3, MARKET_PERCENTILE=0.5, ASKING_MAX_AGE_DAYS=21, PRICE_HISTORY_DAYS=30)
+        m = Market()
+        # trys sviezi skelbimai po 200 ir trys seni, kabantys 40 dienu, po 400
+        m.observe([item(i, "iPhone 13 128GB", 200) for i in range(1, 4)], day=100)
+        m.observe([item(i, "iPhone 13 128GB", 400) for i in range(10, 13)], day=60)
+        m.observe([item(i, "iPhone 13 128GB", 400) for i in range(10, 13)], day=100)
+        self.assertAlmostEqual(m.quote("13", "128 GB", day=100).price, 200 * config.cfg["ASKING_SALE_FACTOR"])
+
+    def test_gone_counts_as_sold(self):
+        reset_config(GONE_AS_SOLD=True)
+        m = Market()
+        m.observe([item(1, "iPhone 13 128GB", 200)], day=100)
+        m.set_status(1, "gone", day=101)
+        self.assertEqual(m.get(1)["st"], "sold")
+        reset_config(GONE_AS_SOLD=False)
+        m.observe([item(2, "iPhone 13 128GB", 200)], day=100)
+        m.set_status(2, "gone", day=101)
+        self.assertEqual(m.get(2)["st"], "gone")
 
     def test_sold_candidates(self):
         reset_config(SOLD_CHECK_AFTER_DAYS=2, SOLD_CHECKS_PER_RUN=10)
