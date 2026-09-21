@@ -107,7 +107,7 @@ class Market:
         if e is None:
             return
         e["c"] = day
-        if status == "sold":
+        if status == "sold" or (status == "gone" and config.cfg["GONE_AS_SOLD"]):
             e["st"], e["sd"] = "sold", day
         elif status == "gone":
             e["st"] = "gone"
@@ -123,11 +123,20 @@ class Market:
         if model in manual:
             return Quote(manual[model], -1, "rankinė", False)
 
-        def values(status, max_age, by_storage, day_key):
-            return [e["p"] for e in self.items.values()
-                    if e["m"] == model and e.get("st") == status
-                    and (not by_storage or e.get("s") == storage)
-                    and day - e.get(day_key, day) <= max_age]
+        def values(status, max_age, by_storage, day_key, max_life=None):
+            out = []
+            for e in self.items.values():
+                if e["m"] != model or e.get("st") != status:
+                    continue
+                if by_storage and e.get("s") != storage:
+                    continue
+                if day - e.get(day_key, day) > max_age:
+                    continue
+                # Ilgai kabantis skelbimas nepasiduoda = kaina per didele rinkai
+                if max_life is not None and day - e.get("f", day) > max_life:
+                    continue
+                out.append(e["p"])
+            return out
 
         if c["USE_SOLD_PRICES"]:
             for by_storage in ([True, False] if storage else [False]):
@@ -135,21 +144,29 @@ class Market:
                 if len(sold) >= c["MIN_SOLD_SAMPLES"]:
                     return Quote(median(sold), len(sold), "parduoti", by_storage)
         for by_storage in ([True, False] if storage else [False]):
-            asking = trimmed(values("active", c["PRICE_HISTORY_DAYS"], by_storage, "l"))
+            asking = trimmed(values("active", c["PRICE_HISTORY_DAYS"], by_storage, "l",
+                                    max_life=c["ASKING_MAX_AGE_DAYS"]))
             if len(asking) >= c["MIN_SAMPLES"]:
-                return Quote(percentile(asking, c["MARKET_PERCENTILE"]), len(asking), "skelbimai", by_storage)
+                price = percentile(asking, c["MARKET_PERCENTILE"]) * c["ASKING_SALE_FACTOR"]
+                return Quote(price, len(asking), "skelbimai", by_storage)
         # Retiems modeliams (16e, 14 Plus, Air...) skelbimu per mazai – naudojam apytiksle kaina,
         # o jei keli skelbimai jau yra – vidurki tarp ju ir apytiksles kainos.
         if c["USE_TYPICAL_FALLBACK"] and typical_price(model):
-            asking = trimmed(values("active", c["PRICE_HISTORY_DAYS"], False, "l"))
+            asking = trimmed(values("active", c["PRICE_HISTORY_DAYS"], False, "l",
+                                    max_life=c["ASKING_MAX_AGE_DAYS"]))
             guess = typical_price(model)
             if len(asking) >= 3:
-                guess = (guess + percentile(asking, c["MARKET_PERCENTILE"])) / 2
+                guess = (guess + percentile(asking, c["MARKET_PERCENTILE"]) * c["ASKING_SALE_FACTOR"]) / 2
             return Quote(guess, len(asking), "apytikslė", False)
         return None
 
     def sample_count(self, model):
         return sum(1 for e in self.items.values() if e["m"] == model and e.get("st") == "active")
+
+    def price_check(self, model, storage, price, day=None):
+        """Kiek procentu kaina pigesne uz rinkos kaina (naudinga /kaina patikrai)."""
+        q = self.quote(model, storage, day)
+        return None if not q else (q, 1 - price / q.price)
 
     def summary(self, day=None):
         """[(modelis, prasoma_kaina|None, n_skelb, parduota_kaina|None, n_parduota)]"""
@@ -158,7 +175,8 @@ class Market:
         by_model = {}
         for e in self.items.values():
             d = by_model.setdefault(e["m"], {"active": [], "sold": []})
-            if e.get("st") == "active" and day - e.get("l", day) <= c["PRICE_HISTORY_DAYS"]:
+            if (e.get("st") == "active" and day - e.get("l", day) <= c["PRICE_HISTORY_DAYS"]
+                    and day - e.get("f", day) <= c["ASKING_MAX_AGE_DAYS"]):
                 d["active"].append(e["p"])
             elif e.get("st") == "sold" and day - e.get("sd", day) <= c["SOLD_HISTORY_DAYS"]:
                 d["sold"].append(e["p"])

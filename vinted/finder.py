@@ -239,7 +239,8 @@ class Run:
                 found[st] += 1
             self.sleep(c["DETAIL_SLEEP_SECONDS"])
         if any(found.values()):
-            print(f"Pardavimu patikra: parduota {found['sold']}, istrinta {found['gone']}")
+            extra = " (dingusius laikom parduotais)" if config.cfg["GONE_AS_SOLD"] else ""
+            print(f"Pardavimu patikra: parduota {found['sold']}, dingo {found['gone']}{extra}")
 
     def run(self):
         c = config.cfg

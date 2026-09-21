@@ -108,7 +108,14 @@ DESCRIPTION_NOT_PHONE_RE = re.compile(
     r"\b(?:tusci\w* dezut\w*|dezut\w* be telefon\w*|empty box\w*|box only|only (the )?box|tik dezut\w*|"
     r"be telefono|telefono nera|telefonas nepridedamas|phone not included|tik korpus\w*|tik ekran\w*|"
     r"tik dekl\w*|paveiksl\w*|remel\w*|framed|kaina uz visas|uz visus|\d+\s?(?:vnt\.?\s)?(?:telefon|dezut)\w*|lotas|lot of|"
-    r"muliaz\w*|dummy|replika|replica|kopija|detalem\w*|atsargin\w* dal\w*)"
+    r"muliaz\w*|dummy|replika|replica|kopija|detalem\w*|atsargin\w* dal\w*|"
+    # Vinted apgavyste: skelbime telefonas, o parduodamas tik popieriaus lapas / nuotrauka
+    r"a4 lapas|a4 formato|lap\w* su (siais |tokiais )?vaizdais|siuntoje (rasite|gausite) tik|"
+    r"gausite tik (lapa|lapas|nuotrauk\w*|foto|spaudin\w*|popieri\w*)|"
+    r"parduodam\w* tik (lapa|lapas|lapelis|nuotrauk\w*|foto|spaudin\w*|popieri\w*|aprasym\w*)|"
+    r"tik (popieri\w* )?lapas|tik lapelis|spausdint\w* (lapas|nuotrauk\w*)|popieri\w* lapas|"
+    r"sheet of paper|printed (photo|picture|paper)|you are buying (a )?(photo|picture|paper|sheet)|"
+    r"not the phone|nera telefonas)"
 )
 
 

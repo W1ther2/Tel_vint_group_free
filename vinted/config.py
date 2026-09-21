@@ -49,7 +49,10 @@ DEFAULTS = {
     "SOLD_CHECK_AFTER_DAYS": 2,      # tikrinti skelbimus, kuriu kataloge nematem bent tiek dienu
     "MIN_SAMPLES": 8,                # kiek prasomu kainu reikia rinkos kainai
     "USE_TYPICAL_FALLBACK": True,    # kai duomenu per mazai – naudoti apytiksle kaina (retiems modeliams)
-    "MARKET_PERCENTILE": 0.5,        # prasomu kainu percentilis (0.5 = mediana, 0.35 = pigesnis trecdalis)
+    "MARKET_PERCENTILE": 0.4,        # prasomu kainu percentilis (0.5 = mediana, 0.35 = pigesnis trecdalis)
+    "ASKING_MAX_AGE_DAYS": 21,       # skelbimai, kabantys ilgiau – per brangus, i rinkos kaina neiskaiciuojami
+    "ASKING_SALE_FACTOR": 0.85,      # prasoma kaina -> reali pardavimo kaina (Vinted deramasi / kabo)
+    "GONE_AS_SOLD": True,            # dinges skelbimas laikomas parduotu (Vinted pardave dazniausiai istrina)
     "PRICE_HISTORY_DAYS": 30,
     "SOLD_HISTORY_DAYS": 60,
     "PRICE_HISTORY_MAX_ITEMS": 12000,
