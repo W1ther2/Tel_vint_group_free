@@ -165,7 +165,13 @@ def condition_ok(condition, minimum):
 # (saknis be diakritiku, pavadinimas, vertes daugiklis). 0 = netinkamas (visada atmetama)
 DEFECT_PATTERNS = [
     (r"icloud", "iCloud užraktas", 0.0),
-    (r"uzblok\w*|blokuot\w*|\blocked\b|uzrakint\w*", "užblokuotas", 0.0),
+    # ir daznos rasybos klaidos: „uzbluokuotas“, „blukuotas“, „uzlockintas“, „lokintas“
+    (r"uzbl\w{0,3}k\w*|bl[aou]{1,2}kuot\w*|\blocked\b|uzrakint\w*|(?:uz)?loc?kint\w*",
+     "užblokuotas", 0.0),
+    # Be baterijos telefono neisbandysi. „be baterijos keitimo / problemu“ – ne tas pats.
+    (r"(?:be|nera|truksta|neturi|isimt\w*|no|without|missing) (?:akum\w*|baterij\w*|batarej\w*|battery)\b"
+     r"(?! (?:problem|keit|pakeit|bed|defekt|gedim|nusidev|susidev|sveikat|degrad|isnaud|issues?|replace|health)\w*)",
+     "be baterijos", 0.0),
     (r"dalims|for parts|parts only|detalem\w*|donor\w*", "dalims", 0.0),
     (r"(prasyt?\w*|praso|reikia|nezin\w*|pamirs\w*|ivesti|uzrakint\w*) (\w+ ){0,3}(kod\w*|slaptazod\w*|pin\w*)|"
      r"(kod\w*|slaptazod\w*) (\w+ ){0,3}(nezin\w*|pamirs\w*)|passcode|activation lock|aktyvacij\w* uzrakt\w*",
@@ -196,10 +202,18 @@ DEFECT_PATTERNS = [
 ]
 _DEFECT_RE = [(re.compile(r"\b(?:" + p + r")"), label, f) for p, label, f in DEFECT_PATTERNS]
 _NE_IS_DEFECT = {"kažkas neveikia", "neveikia Face ID", "neįsijungia / nesikrauna", "netestuotas",
-                 "užrakintas kodu", "ekrano gedimas", "neaiški kilmė"}
+                 "užrakintas kodu", "ekrano gedimas", "neaiški kilmė", "be baterijos"}
+_NEGATION_IS_DEFECT = {"be baterijos"}
 _NEGATE_BEFORE = {"be", "nera", "no", "not", "without", "jokiu", "jokio", "nieko", "neturi", "zero", "0"}
-_NEGATE_AFTER = {"atristas", "atrista", "atsietas", "laisvas", "isjungtas", "nera", "free", "off",
-                 "clean", "unlocked", "nepriristas", "neprisietas", "atrakintas", "atrakinta"}
+# Zodziai PO defekto, kurie ji paneigia: "iCloud atristas", "iCloud paskyra bus atsieta".
+# Tokia formuluote lietuviskuose skelbimuose iprasta, todel ziurim kelis zodzius i prieki.
+_NEGATE_AFTER = {"atristas", "atrista", "atrista", "atrisiu", "atrisamas",
+                 "atsietas", "atsieta", "atsiesiu", "atsiejamas",
+                 "laisvas", "isjungtas", "isjungta", "nera", "free", "off",
+                 "clean", "unlocked", "nepriristas", "neprisietas",
+                 "atrakintas", "atrakinta", "pasalintas", "pasalinta",
+                 "islogintas", "isloginta", "removed"}
+_NEGATE_AFTER_WORDS = 4
 
 
 def find_defects(*texts):
@@ -210,9 +224,14 @@ def find_defects(*texts):
         for m in rx.finditer(t):
             clause = re.split(r"[.,;!?\n]|\bbet\b|\bbut\b", t[:m.start()])[-1]
             before = {w.strip(",.;:!-()") for w in clause.split()[-4:]}
-            after = {w.strip(",.;:!-()") for w in re.split(r"[.,;!?\n]", t[m.end():])[0].split()[:2]}
+            after = {w.strip(",.;:!-()") for w in
+                     re.split(r"[.,;!?\n]", t[m.end():])[0].split()[:_NEGATE_AFTER_WORDS]}
             inside = set(t[m.start():m.end()].split())
-            if before & _NEGATE_BEFORE or after & _NEGATE_AFTER or inside & _NEGATE_BEFORE:
+            # „be akumo“ – pats „be“ ir yra defektas, tad cia paneigimo nebetikrinam
+            negation_is_defect = label in _NEGATION_IS_DEFECT
+            if not negation_is_defect and (before & _NEGATE_BEFORE or inside & _NEGATE_BEFORE):
+                continue
+            if after & _NEGATE_AFTER:
                 continue
             # "nesudaužytas", "neskilęs" = paneigimas; bet "neveikia", "neįsijungia" – pats defektas
             if label not in _NE_IS_DEFECT and t[m.start():m.end()].startswith("ne"):
@@ -286,10 +305,17 @@ def estimate_value(market, condition, battery, defects):
     return value
 
 
-def estimate_profit(price, resale_value, pickup_only=False):
-    """Pelnas perpardavus: verte - (kaina + Vinted pirkejo mokestis + siuntimas)."""
+def estimate_profit(price, resale_value, pickup_only=False, buyer_fee=True, total_price=None):
+    """Pelnas perpardavus: verte - (kaina + pirkejo apsaugos mokestis + siuntimas).
+
+    `total_price` – tikra suma su mokesciu, kai saltinis ja pasako (Vinted pasako).
+    `buyer_fee` – ar mokestis apskritai imamas (Skelbiu/Pirkpard – ne)."""
     c = config.cfg
-    cost = price + c["BUYER_FEE_FIXED"] + price * c["BUYER_FEE_PCT"]
+    cost = price
+    if total_price and total_price > 0:
+        cost = float(total_price)
+    elif buyer_fee:
+        cost += c["BUYER_FEE_FIXED"] + price * c["BUYER_FEE_PCT"]
     if not pickup_only:
         cost += c["SHIPPING_COST"]
     return resale_value - cost

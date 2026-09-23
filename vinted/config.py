@@ -18,6 +18,35 @@ BASE = "https://www.vinted.lt"
 API_BASE = "https://api.vinted.lt"
 
 DEFAULTS = {
+    # --- Is kur ieskoti ---
+    # Saltiniai ta tvarka, kuria tikrinami. Galimi: "vinted".
+    # Naujas saltinis = vienas failas vinted/sources/ + jo vardas cia.
+    "SOURCES": ["vinted"],
+    # Saltiniai tikrinami vienu metu (jie eina i skirtingus serverius, tad vienas kito
+    # nestabdo). false = paeiliui, tada laikas dalijamas po lygiai.
+    "PARALLEL_SOURCES": True,
+    # Vinted: viena paieska "iphone" grazina VISUS modelius, tad 34 atskiru nereikia.
+    # Tai maziausiai 30 kartu maziau uzklausu ir tiek pat kartu greiciau.
+    # false = ieskoti kiekvieno modelio atskirai pagal SEARCH_QUERIES.
+    "VINTED_BROWSE_ALL": True,
+    "VINTED_QUERIES": ["iphone"],
+    "VINTED_BROWSE_PAGES": 3,        # po 96 skelb. = ~290 naujausiu, iprastam paleidimui
+    "VINTED_FULL_SCAN_PAGES": 10,    # pirmam paleidimui (seen.json tuscias)
+    "VINTED_MAX_PAGES": 10,          # Vinted giliau neleidzia: 11-as puslapis = HTTP 400
+
+    # Skelbiu: narsyti visa Apple kategorija vienu sarasu, o ne ieskoti kiekvieno modelio
+    # atskirai. Greiciau ir randa daugiau (skelbimu pavadinimai ne visada sutampa su
+    # raktazodziu). false = naudoti SEARCH_QUERIES kaip Vinted.
+    "SKELBIU_BROWSE_ALL": True,
+    # Narsykles parasas Skelbiu (curl_cffi). Tuscia = bandom kelis is eiles ir
+    # naudojam ta, kuris praeina. Pvz. "chrome131".
+    "SKELBIU_IMPERSONATE": "",
+    # Pirkpard: JSON API, aprasymas ateina kartu su sarasu, tad uzteks vienos uzklausos.
+    "PIRKPARD_QUERIES": ["iphone"],
+    "PIRKPARD_PER_PAGE": 100,
+    "PIRKPARD_SKIP_AUCTIONS": True,   # aukcione kaina reiskia dabartini pasiulyma, ne kaina
+    "PIRKPARD_STATUS_PAGES": 3,       # kiek puslapiu perziureti tikrinant, kas parduota
+
     # --- Ka ieskoti ---
     "SEARCH_QUERIES": [
         "iPhone 8", "iPhone 8 Plus", "iPhone X", "iPhone XR", "iPhone XS", "iPhone XS Max",
@@ -30,10 +59,22 @@ DEFAULTS = {
     ],
 
     # --- Kas yra "gera kaina" ---
+    # "rank"     – siunciam, jei skelbimas tarp pigiausiu SIUO METU parduodamu tokiu pat
+    #              telefonu (tas pats modelis ir talpa). Rinkos kainos zinoti nereikia.
+    # "discount" – siunciam, jei pigiau nei musu ivertinta verte (senasis budas).
+    # Kai palyginti per mazai (reti modeliai), "rank" pats grizta prie "discount".
+    "DEAL_MODE": "rank",
+    "RANK_TOP_PCT": 0.15,            # tarp 15% pigiausiu (23 skelbimai -> 1-4 vietos)
+    "RANK_MIN_PEERS": 8,             # maziau aktyviu skelbimu – vieta nieko nereiskia
+    # "Dabar parduodami" = matyti kataloge per paskutines tiek dienu. Senesni greiciausiai
+    # jau parduoti – su jais lyginti butu tas pats, kas lyginti su nebeegzistuojanciais.
+    "RANK_RECENT_DAYS": 2,
     "MIN_DISCOUNT": 0.10,            # bent 10% pigiau nei telefono verte
     "HARD_MIN_PRICE_RATIO": 0.40,    # pigiau nei 40% rinkos – beveik visada sugedes/dalims/ne telefonas, atmetama
     "SUSPICIOUS_PRICE_RATIO": 0.55,  # pigiau nei 55% rinkos – siunciama, bet pazymima rizika
-    "MIN_BATTERY": 0,                # min. baterijos % (0 = netikrinti)
+    # Baterija: nurodyta ir per maza -> atmetama; nenurodyta -> praleidziama su zyma kortelėje.
+    "MIN_BATTERY": 80,               # min. baterijos % (0 = netikrinti)
+    "LOW_BATTERY_MIN_DISCOUNT": 0.30,  # isimtis: labai pigus telefonas praleidziamas ir su mazesne baterija
     "MODEL_MIN_PRICES": {},          # savos min. kainos modeliams, pvz. {"13": 100} (kitiems – numatytosios)
 
     # --- Tik tvarkingi telefonai ---
@@ -52,6 +93,16 @@ DEFAULTS = {
     "MARKET_PERCENTILE": 0.4,        # prasomu kainu percentilis (0.5 = mediana, 0.35 = pigesnis trecdalis)
     "ASKING_MAX_AGE_DAYS": 21,       # skelbimai, kabantys ilgiau – per brangus, i rinkos kaina neiskaiciuojami
     "ASKING_SALE_FACTOR": 0.85,      # prasoma kaina -> reali pardavimo kaina (Vinted deramasi / kabo)
+
+    # --- Savikalibracija ---
+    # Kodas isimena, kiek spejo uz kiekviena telefona, ir kai tas telefonas parduodamas,
+    # palygina su realia kaina. Sistemine paklaida automatiskai istaisoma.
+    "AUTO_CALIBRATE": True,
+    "MIN_CALIBRATION_SAMPLES": 20,   # kiek parduotu reikia, kad pataisymas butu daromas
+    "CALIBRATION_MAX_STEP": 0.05,    # daugiausiai 5% pokytis per paleidima (be soliu)
+    "CALIBRATION_MIN": 0.70,         # ribos, kad klaidingi duomenys nenuvestu i absurda
+    "CALIBRATION_MAX": 1.15,
+
     "GONE_AS_SOLD": True,            # dinges skelbimas laikomas parduotu (Vinted pardave dazniausiai istrina)
     "PRICE_HISTORY_DAYS": 30,
     "SOLD_HISTORY_DAYS": 60,
@@ -63,6 +114,7 @@ DEFAULTS = {
 
     # --- Pelnas perpardavus ---
     "SHOW_PROFIT": True,
+    "SHOW_RANK": False,              # rodyti kortelej „12-as pigiausias iš 64 ...“ (atrankai naudojama visada)
     "BUYER_FEE_FIXED": 0.70,         # Vinted pirkejo apsaugos mokestis (fiksuota dalis)
     "BUYER_FEE_PCT": 0.05,           # Vinted pirkejo apsaugos mokestis (procentai)
     "SHIPPING_COST": 3.5,            # siuntimo kaina perkant
@@ -72,9 +124,10 @@ DEFAULTS = {
     "TELEGRAM_COMMANDS": True,       # leisti keisti nustatymus komandomis Telegram'e
     # Kas gali keisti nustatymus. Tuscia = niekas (komandos grupeje ignoruojamos).
     # Savo ID suzinosi parases botui privaciai /start.
-    "ADMIN_IDS": [],
+    "ADMIN_IDS": [6157710734],
     "HEARTBEAT_HOURS": 24,
     "FAIL_ALERT_RUNS": 3,            # po kiek nesekmingu paleidimu is eiles pranesti apie problema
+    "SOURCE_ALERT_HOURS": 12,        # kaip daznai pranesti apie blokuojama saltini (0 = kas karta)
 
     # --- Priedu atpazinimas (pirmas pavadinimo zodis) ---
     "ACCESSORY_FIRST_WORDS": [
@@ -118,9 +171,14 @@ _RENAMED = {"PRICE_HISTORY_MAX": None, "MIN_PRICE_RATIO": None}
 
 cfg = dict(DEFAULTS)
 
+# Jei config.json nepavyko perskaityti – kodel (pranesama Telegram'e, kad nelikt nepastebeta)
+load_error = ""
+
 
 def load(path=CONFIG_FILE):
     """Ikelia config.json i `cfg` (vietoje). Grazina cfg."""
+    global load_error
+    load_error = ""
     cfg.clear()
     cfg.update(json.loads(json.dumps(DEFAULTS)))
     if not os.path.exists(path):
@@ -137,13 +195,14 @@ def load(path=CONFIG_FILE):
         if unknown:
             print(f"  (nezinomi raktai ignoruojami: {', '.join(unknown)})")
     except Exception as e:
+        load_error = str(e)
         print(f"! Nepavyko nuskaityti {path} ({e}) – naudojami numatytieji.")
     return cfg
 
 
 # Raktai, kuriuos galima keisti Telegram komandomis
 OVERRIDABLE = {"MIN_DISCOUNT", "MIN_BATTERY", "LOUD_DISCOUNT", "MARKET_PRICES", "PAUSED", "TIDY_ONLY",
-               "MARKET_PERCENTILE", "SHOW_PROFIT"}
+               "MARKET_PERCENTILE", "SHOW_PROFIT", "AUTO_CALIBRATE", "DEAL_MODE", "RANK_TOP_PCT"}
 
 
 def apply_overrides(overrides):

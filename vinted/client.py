@@ -159,6 +159,11 @@ class VintedClient:
                     self.last_error = f"HTTP {code} ({short}): serverio klaida"
                     self.sleep(wait * attempt)
                     continue
+                if code == 400 and page > 1:
+                    # Vinted leidzia ne daugiau ~10 puslapiu (960 skelb.). Toliau – 400
+                    # INVALID_REQUEST. Tai ne klaida, o saraso pabaiga.
+                    debug(f"'{query}' p.{page}: HTTP 400 – Vinted puslapiu riba, toliau nera")
+                    return []
                 if code != 200:
                     self.last_error = f"HTTP {code} ({short}): {short_body(resp.text)}"
                     print(f"  ! '{query}' p.{page}: {self.last_error}")

@@ -25,6 +25,27 @@ def today():
     return int(time.time() // 86400)
 
 
+def human_age(timestamp, now=None):
+    """Unix laikas -> 'prieš 4 min.' / 'prieš 3 val.' / 'prieš 2 d.' (None, jei nezinoma)."""
+    if not timestamp:
+        return None
+    seconds = (now if now is not None else time.time()) - float(timestamp)
+    if seconds < 0:
+        return None
+    minutes = int(seconds // 60)
+    if minutes < 1:
+        return "ką tik"
+    if minutes < 60:
+        return f"prieš {minutes} min."
+    hours = minutes // 60
+    if hours < 24:
+        return f"prieš {hours} val."
+    days = hours // 24
+    if days < 31:
+        return f"prieš {days} d."
+    return f"prieš {days // 30} mėn."
+
+
 def median(values):
     v = sorted(values)
     n = len(v)

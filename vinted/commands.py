@@ -11,7 +11,9 @@ HELP = """<b>Komandos</b>
 /kaina 13 Pro Max 256 390 – konkrečiai talpai
 /kaina 13 trinti – grąžinti automatinę kainą
 /kainos – visos rinkos kainos
-/nuolaida 20 – siųsti nuo 20% pigiau nei vertė
+/pigiausi 15 – siųsti tarp 15% pigiausių dabar parduodamų
+/rezimas pigiausi|nuolaida – kaip spręsti, ar pigu
+/nuolaida 20 – (nuolaidos režimas) siųsti nuo 20% pigiau nei vertė
 /baterija 80 – min. baterija (0 – netikrinti)
 /garsas 30 – su garsu tik nuo 30% pigiau
 /rinka 50 – rinkos kaina = mediana (35 – pigesnis trečdalis, griežčiau)
@@ -19,6 +21,8 @@ HELP = """<b>Komandos</b>
 /tvarkingi taip|ne – tik tvarkingi telefonai
 /pauze – nesiųsti skelbimų, /testi – vėl siųsti
 /statistika – kodėl atmesti skelbimai (paskutinis paleidimas)
+/tikslumas – kiek vertinimas atitinka realias pardavimo kainas
+/kalibruoti taip|ne – ar taisyti vertinimą automatiškai
 /nustatymai – dabartiniai nustatymai
 <i>Komandos įvykdomos kito paleidimo metu.</i>"""
 
@@ -58,6 +62,8 @@ def _prices_text(state):
 TIPS = {
     "per brangu": "normalu – kaina ne žemiau rinkos. Daugiau skelbimų: /nuolaida 10",
     "ne pakankamai pigu": "pigiau už rinką, bet mažiau nei nuolaida. Daugiau: /nuolaida 10",
+    "ne tarp pigiausių": "normalu – skelbimas ne tarp pigiausių dabar. Daugiau: /pigiausi 25",
+    "(retas modelis": "per mažai tokių skelbimų palyginti – vertinta pagal nuolaidą",
     "per mazai kainu duomenu": "modeliui dar trūksta kainų – kaupsis savaime arba /kaina 13 180",
     "ne telefonas / kitas modelis": "dėklai, stiklai, kiti modeliai – normalu",
     "defektai": "sugedę telefonai. Siųsti ir juos: /tvarkingi ne",
@@ -82,9 +88,47 @@ def _stats_text(state):
     return "\n".join(lines)
 
 
+def _accuracy_text(state):
+    """Kiek musu vertinimas atitiko realias pardavimo kainas."""
+    c = config.cfg
+    acc = state.market.accuracy()
+    cal = state.market.calibration
+    if not acc["n"]:
+        return ("Tikslumo duomenų dar nėra.\n<i>Jie kaupiasi, kai stebimas telefonas "
+                "parduodamas – tada palyginam, kiek spėjom ir kiek realiai gauta.</i>")
+    bias = 1 - acc["ratio"]
+    word = "pervertiname" if bias > 0 else "nuvertiname"
+    how = "patvirtinti pardavimai" if acc["confirmed"] else "dingę skelbimai (spėjama, kad parduoti)"
+    lines = [f"<b>Vertinimo tikslumas</b> ({acc['n']} parduoti – {how})",
+             f"Vidutiniškai <b>{word} {abs(bias):.0%}</b>",
+             f"Dabartinis pataisymas: <b>x{cal:.3f}</b>"
+             f"{' (savikalibracija išjungta)' if not c['AUTO_CALIBRATE'] else ''}", ""]
+    for model, n, ratio in acc["rows"][:12]:
+        mark = "✅" if abs(1 - ratio) < 0.08 else "⚠️"
+        lines.append(f"{mark} iPhone {model}: realiai {ratio:.0%} mūsų vertinimo ({n} parduoti)")
+    truksta = c["MIN_CALIBRATION_SAMPLES"] - acc["n_target"]
+    if truksta > 0:
+        lines.append(f"\n<i>Automatiniam pataisymui reikia {c['MIN_CALIBRATION_SAMPLES']} parduotų – "
+                     f"dar trūksta {truksta}.</i>")
+    elif acc["target"]:
+        lines.append(f"\n<i>Teisingas būtų pataisymas x{acc['target'] / c['ASKING_SALE_FACTOR']:.3f}; "
+                     f"prie jo einama po {c['CALIBRATION_MAX_STEP']:.0%} per paleidimą.</i>")
+    return "\n".join(lines)
+
+
 def is_admin(user_id):
     admins = [str(x) for x in (config.cfg.get("ADMIN_IDS") or [])]
     return str(user_id) in admins
+
+
+def admin_setup_message(user_id):
+    """Atsakymas, kai grupeje parasyta komanda, bet ADMIN_IDS dar tuscias."""
+    uid = user_id if str(user_id).isdigit() else "123456789"
+    return ("⚙️ <b>Komandos dar neįjungtos</b> – nenurodytas administratorius.\n"
+            f"Tavo Telegram ID: <code>{uid}</code>\n\n"
+            f"GitHub'e atidaryk <code>config.json</code>, surask eilutę "
+            f"<code>\"ADMIN_IDS\": []</code> ir pakeisk į <code>\"ADMIN_IDS\": [{uid}]</code>, "
+            f"tada Commit. Po to komandą parašyk dar kartą.")
 
 
 def handle_callback(cb, state):
@@ -187,6 +231,16 @@ def handle(text, state):
         if cmd in ("statistika", "stats"):
             return _stats_text(state)
 
+        if cmd in ("tikslumas", "tikslumą"):
+            return _accuracy_text(state)
+
+        if cmd in ("kalibruoti", "kalibravimas"):
+            v = args.lower() not in ("ne", "no", "0", "off", "isjungti")
+            _set(state, "AUTO_CALIBRATE", v)
+            return ("✅ Vertinimas bus automatiškai taisomas pagal realius pardavimus"
+                    if v else f"✅ Savikalibracija išjungta (pataisymas lieka "
+                              f"x{state.market.calibration:.3f})")
+
         if cmd == "kainos":
             return _prices_text(state)
 
@@ -197,12 +251,38 @@ def handle(text, state):
             _set(state, "MIN_DISCOUNT", v)
             return f"✅ Siųsiu skelbimus nuo {v:.0%} pigiau nei vertė"
 
+        if cmd == "pigiausi":
+            v = _percent(args)
+            if not 0.01 <= v <= 0.9:
+                raise ValueError
+            _set(state, "RANK_TOP_PCT", v)
+            _set(state, "DEAL_MODE", "rank")
+            return (f"✅ Siųsiu skelbimus, kurie tarp {v:.0%} pigiausių šiuo metu parduodamų "
+                    f"tokių pat telefonų.\n<i>Rinkos kainos žinoti nereikia – lyginama su "
+                    f"realiais dabartiniais skelbimais.</i>")
+
+        if cmd in ("rezimas", "režimas"):
+            a = args.lower().strip()
+            if a.startswith("pig") or a == "rank":
+                _set(state, "DEAL_MODE", "rank")
+                return (f"✅ Režimas: tarp {c['RANK_TOP_PCT']:.0%} pigiausių dabar parduodamų "
+                        f"(keisti: /pigiausi 20)")
+            if a.startswith("nuol") or a == "discount":
+                _set(state, "DEAL_MODE", "discount")
+                return (f"✅ Režimas: bent {c['MIN_DISCOUNT']:.0%} pigiau nei įvertinta vertė "
+                        f"(keisti: /nuolaida 15)")
+            raise ValueError
+
         if cmd == "baterija":
             v = int(float(args.replace("%", "")))
             if not 0 <= v <= 100:
                 raise ValueError
             _set(state, "MIN_BATTERY", v)
-            return "✅ Baterija netikrinama" if v == 0 else f"✅ Min. baterija: {v}%"
+            if v == 0:
+                return "✅ Baterija netikrinama"
+            return (f"✅ Min. baterija: {v}%\n"
+                    f"<i>Nenurodyta baterija praleidžiama (kortelėje – „nenurodyta“), "
+                    f"o mažesnė – tik jei bent {c['LOW_BATTERY_MIN_DISCOUNT']:.0%} pigiau.</i>")
 
         if cmd == "pelnas":
             v = args.lower() not in ("ne", "no", "0", "off", "isjungti", "nerodyti")
@@ -238,11 +318,17 @@ def handle(text, state):
 
         if cmd == "nustatymai":
             manual = config.market_prices()
+            rezimas = (f"tarp {c['RANK_TOP_PCT']:.0%} pigiausių dabar" if c.get("DEAL_MODE") == "rank"
+                       else f"bent {c['MIN_DISCOUNT']:.0%} pigiau nei vertė")
             return ("<b>Nustatymai</b>\n"
+                    f"Kas laikoma pigiu: {rezimas}\n"
                     f"Min. nuolaida: {c['MIN_DISCOUNT']:.0%}\n"
                     f"Rinkos kaina: {c['MARKET_PERCENTILE']:.0%} percentilis\n"
                     f"Su garsu nuo: {c['LOUD_DISCOUNT']:.0%}\n"
                     f"Min. baterija: {c['MIN_BATTERY'] or 'netikrinama'}\n"
+                    f"Šaltiniai: {', '.join(str(s) for s in c['SOURCES'])}\n"
+                    f"Vertinimo pataisymas: x{state.market.calibration:.3f}"
+                    f"{' (auto)' if c.get('AUTO_CALIBRATE') else ' (rankinis)'}\n"
                     f"Tik tvarkingi: {'taip' if c.get('TIDY_ONLY') else 'ne'}\n"
                     f"Rodyti pelną: {'taip' if c.get('SHOW_PROFIT') else 'ne'}\n"
                     f"Pauzė: {'taip' if c.get('PAUSED') else 'ne'}\n"

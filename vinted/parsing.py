@@ -72,6 +72,47 @@ def get_photo_url(item, og=None):
     return (og or {}).get("image")
 
 
+def _to_timestamp(v):
+    """Unix laikas is skaiciaus arba ISO datos. Netinka -> None."""
+    if v in (None, "", 0):
+        return None
+    try:
+        if isinstance(v, (int, float)) or str(v).isdigit():
+            ts = float(v)
+            if ts > 1e12:                    # milisekundes
+                ts /= 1000.0
+            return ts if 946684800 < ts < 4102444800 else None   # 2000..2100
+        dt = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def get_created_at(item):
+    """Kada skelbimas ikeltas (unix laikas) arba None.
+
+    Vinted kataloge tikslios datos nera, bet pagrindines nuotraukos laikas
+    praktiskai sutampa su ikelimo momentu."""
+    for key in ("created_at_ts", "created_at", "createdAt", "upload_date", "active_since"):
+        ts = _to_timestamp(item.get(key))
+        if ts:
+            return ts
+    photo = item.get("photo")
+    if isinstance(photo, dict):
+        for key in ("high_resolution", "thumbnails"):
+            sub = photo.get(key)
+            if isinstance(sub, dict):
+                ts = _to_timestamp(sub.get("timestamp"))
+                if ts:
+                    return ts
+        ts = _to_timestamp(photo.get("timestamp"))
+        if ts:
+            return ts
+    return None
+
+
 def get_photo_count(item):
     """Tikras nuotrauku skaicius, TIK jei Vinted ji pateikia atskiru lauku.
     Katalogo "photos" sarasas turi tik pagrindine nuotrauka, todel jo ilgis
