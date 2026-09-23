@@ -6,6 +6,7 @@ import time
 import unittest
 
 from tests.helpers import reset_config, TempDir, item
+from vinted import config
 from vinted.finder import Run
 
 
@@ -115,16 +116,16 @@ class FlowTest(unittest.TestCase):
             tg = FakeTelegram()
             log = run(client, tg)
             sent = {d["id"]: (d, silent) for d, silent in tg.deals}
-            self.assertEqual(set(sent), {"1", "2"}, log)
-            self.assertTrue(sent["1"][1])
-            self.assertFalse(sent["2"][1])
-            self.assertEqual(sent["2"][0]["battery"], 91)
-            self.assertGreater(sent["2"][0]["profit"], 0)
+            self.assertEqual(set(sent), {"vinted:1", "vinted:2"}, log)
+            self.assertTrue(sent["vinted:1"][1])
+            self.assertFalse(sent["vinted:2"][1])
+            self.assertEqual(sent["vinted:2"][0]["battery"], 91)
+            self.assertGreater(sent["vinted:2"][0]["profit"], 0)
             for reason in ["neveikiantis / užrakintas / netestuotas", "ne telefonas / kitas modelis", "kalba", "salis",
                            "per pigu (sugedęs / dalims / ne telefonas?)"]:
                 self.assertIn(reason, log)
             state = read_json("state.json")
-            self.assertEqual(state["market"]["items"]["2"]["a"], 150)
+            self.assertEqual(state["market"]["items"]["vinted:2"]["a"], 150)
 
             # antras paleidimas – niekas nesiunciama pakartotinai
             tg2 = FakeTelegram()
@@ -157,9 +158,36 @@ class FlowTest(unittest.TestCase):
             })
             tg = FakeTelegram()
             log = run(client, tg)
-            self.assertEqual(sorted(d["id"] for d, _ in tg.deals), ["5", "6"], log)
+            self.assertEqual(sorted(d["id"] for d, _ in tg.deals), ["vinted:5", "vinted:6"], log)
             quote = tg.deals[0][0]["quote"]
             self.assertGreater(quote.price, 100)                     # sugede/pigus nesugadino rinkos kainos
+
+    def test_battery_rules(self):
+        """Nurodyta ir per maza -> atmetam; per maza, bet labai pigu -> siunciam su zyma;
+        nenurodyta -> siunciam ('nenurodyta' kortelėje)."""
+        reset_config(SEARCH_QUERIES=["iPhone 13"], HEARTBEAT_HOURS=0, MIN_SAMPLES=8,
+                     MARKET_PERCENTILE=0.5, MIN_DISCOUNT=0.15, MIN_BATTERY=80,
+                     LOW_BATTERY_MIN_DISCOUNT=0.30)
+        with TempDir():
+            cat = market_items() + [
+                item(1, "iPhone 13 128GB", 173, user_id=1),    # baterija 70%, ~20% pigiau -> atmesta
+                item(2, "iPhone 13 128GB", 140, user_id=2),    # baterija 70%, ~35% pigiau -> praleista
+                item(3, "iPhone 13 128GB", 190, user_id=3),    # baterija nenurodyta -> praleista
+            ]
+            client = FakeClient({"iPhone 13": cat}, pages={
+                "1": "Tvarkingas telefonas, baterija 70%, siunčiu per Vinted",
+                "2": "Tvarkingas telefonas, baterija 70%, siunčiu per Vinted",
+                "3": "Tvarkingas telefonas, siunčiu per Vinted",
+            })
+            tg = FakeTelegram()
+            log = run(client, tg)
+            sent = {d["id"]: d for d, _ in tg.deals}
+            self.assertEqual(set(sent), {"vinted:2", "vinted:3"}, log)
+            self.assertTrue(sent["vinted:2"]["battery_low"])
+            self.assertEqual(sent["vinted:2"]["battery"], 70)
+            self.assertIsNone(sent["vinted:3"]["battery"])
+            self.assertFalse(sent["vinted:3"]["battery_low"])
+            self.assertIn("baterija", log)
 
     def test_collects_catalog_and_brand_ids(self):
         reset_config(SEARCH_QUERIES=["iPhone 13"], HEARTBEAT_HOURS=0, MIN_SAMPLES=100)
@@ -205,6 +233,45 @@ class FlowTest(unittest.TestCase):
             run(FakeClient({"iPhone 13": []}), tg)
             self.assertEqual([m for m in tg.messages if "/kaina" in m], [])
 
+    def test_no_admin_configured_explains_setup(self):
+        """Gyvas atvejis: ADMIN_IDS tuscias, /pigiausi 25 tyliai ignoruota – savininkas nesuprato kodel."""
+        reset_config(SEARCH_QUERIES=["iPhone 13"], HEARTBEAT_HOURS=0, ADMIN_IDS=[])
+        with TempDir():
+            tg = FakeTelegram(updates=[(5, "/statistika"), (6, "/pigiausi 25")])
+            run(FakeClient({"iPhone 13": []}), tg)
+            setup = [m for m in tg.messages if "ADMIN_IDS" in m]
+            self.assertEqual(len(setup), 1)                     # vienas paaiskinimas, ne du
+            self.assertIn("<code>1</code>", setup[0])            # rasiusiojo ID
+            self.assertEqual(config.cfg["RANK_TOP_PCT"], 0.15)   # nustatymas nepakeistas
+
+    def test_broken_config_reported_hourly(self):
+        """config.json sugadintas redaguojant – botas veikia ir apie tai pasako, bet ne kas 10 min."""
+        import os
+        from vinted.config import load
+        with TempDir():
+            with open("config.json", "w", encoding="utf-8") as f:
+                f.write('{\n  "ADMIN_IDS": [6157710734]\n  "PAGES": 2\n}')     # truksta kablelio
+            load("config.json")
+            self.assertIn("line 3", config.load_error)
+            config.cfg.update(SEARCH_QUERIES=["iPhone 13"], HEARTBEAT_HOURS=0,
+                              VINTED_BROWSE_ALL=False, DEAL_MODE="discount")
+            tg1, tg2 = FakeTelegram(), FakeTelegram()
+            run(FakeClient({"iPhone 13": []}), tg1)
+            run(FakeClient({"iPhone 13": []}), tg2)
+            self.assertEqual(len([m for m in tg1.messages if "config.json sugadintas" in m]), 1)
+            self.assertEqual([m for m in tg2.messages if "config.json sugadintas" in m], [])
+            with open("config.json", "w", encoding="utf-8") as f:
+                f.write('{"PAGES": 2}')
+            load("config.json")
+            self.assertEqual(config.load_error, "")
+
+    def test_admin_configured_stranger_still_silent(self):
+        reset_config(SEARCH_QUERIES=["iPhone 13"], HEARTBEAT_HOURS=0, ADMIN_IDS=["999"])
+        with TempDir():
+            tg = FakeTelegram(updates=[(5, "/pigiausi 25")])
+            run(FakeClient({"iPhone 13": []}), tg)
+            self.assertEqual([m for m in tg.messages if "ADMIN_IDS" in m], [])
+
     def test_time_limit_stops_run(self):
         reset_config(SEARCH_QUERIES=["A", "B", "C"], HEARTBEAT_HOURS=0, MAX_RUN_MINUTES=1e-9)
         with TempDir():
@@ -219,7 +286,7 @@ class FlowTest(unittest.TestCase):
             first = []
             for _ in range(3):
                 log = run(client, FakeTelegram())
-                first.append(log.split("Tikrinama: '")[1].split("'")[0])
+                first.append(log.split("Tikrinama [Vinted]: '")[1].split("'")[0])
             self.assertEqual(first, ["A", "B", "C"])
 
     def test_price_drop(self):
@@ -245,7 +312,7 @@ class FlowTest(unittest.TestCase):
             client = FakeClient({"iPhone 13": [item(1, "iPhone 13", 150)]})
             log = run(client, FakeTelegram())
             self.assertIn("per mazai kainu duomenu", log)
-            self.assertNotIn("1", read_json("seen.json"))
+            self.assertNotIn("vinted:1", read_json("seen.json"))
 
     def test_rare_model_uses_typical_price(self):
         reset_config(SEARCH_QUERIES=["iPhone 16e"], HEARTBEAT_HOURS=0, MIN_SAMPLES=8)
@@ -294,7 +361,7 @@ class FlowTest(unittest.TestCase):
                                           "3": (200, '{"is_closed":true}'), "4": (404, "")})
             run(client, FakeTelegram())
             items = read_json("state.json")["market"]["items"]
-            self.assertEqual([items[k]["st"] for k in "1234"], ["sold", "sold", "sold", "gone"])
+            self.assertEqual([items["vinted:" + k]["st"] for k in "1234"], ["sold", "sold", "sold", "gone"])
             tg = FakeTelegram()
             client.catalog["iPhone 13"] = [item(10, "iPhone 13 128GB", 150)]
             run(client, tg)
@@ -306,7 +373,7 @@ class FlowTest(unittest.TestCase):
         with TempDir():
             tg = FakeTelegram()
             run(FakeClient({}), tg)
-            self.assertTrue(any("skriptas veikia" in m for m in tg.messages))
+            self.assertTrue(any("Skriptas veikia" in m for m in tg.messages))
             # vienkartinis nesekmingas paleidimas (pvz. Vinted 403) – dar nepranesam
             self.assertFalse(any("ISPEJIMAS" in m for m in tg.messages))
             for _ in range(2):
@@ -319,7 +386,7 @@ class FlowTest(unittest.TestCase):
             self.assertFalse(any("ISPEJIMAS" in m for m in tg.messages))
             tg2 = FakeTelegram()
             run(FakeClient({}), tg2)
-            self.assertFalse(any("skriptas veikia" in m for m in tg2.messages))
+            self.assertFalse(any("Skriptas veikia" in m for m in tg2.messages))
 
 
 class CardTest(unittest.TestCase):

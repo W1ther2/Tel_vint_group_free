@@ -90,6 +90,29 @@ class DefectTest(unittest.TestCase):
     def test_fatal_defects_zero(self):
         self.assertTrue(any(f == 0 for _, f in find_defects("iCloud užblokuotas")))
 
+    def test_real_listing_locked_without_battery(self):
+        """Tikras Vinted skelbimas, atejes kaip „pigiausias iš 154“: rasybos klaida ir „be akumo“."""
+        labels = self.labels("iPhone 14 - Užbluokuotas be akumo")
+        self.assertIn("užblokuotas", labels)
+        self.assertIn("be baterijos", labels)
+
+    def test_lock_typos(self):
+        for text in ["užbluokuotas", "Užblokuotas", "užlockintas", "blukuotas", "uzblokuotas operatoriui"]:
+            self.assertIn("užblokuotas", self.labels(text), text)
+        for text in ["neužblokuotas", "nėra užblokuotas", "iCloud atrištas, neblokuotas",
+                     "bloknotas dovanų", "lokalus pardavimas", "su blokeliu"]:
+            self.assertNotIn("užblokuotas", self.labels(text), text)
+
+    def test_missing_battery(self):
+        for text in ["be akumo", "nėra baterijos", "trūksta akumo", "neturi baterijos",
+                     "be dėžutės be akumo", "no battery", "without battery"]:
+            self.assertIn("be baterijos", self.labels(text), text)
+        # „be“ cia reiskia „be problemu“ – telefonas tvarkingas
+        for text in ["be baterijos keitimo", "be baterijos problemų, veikia", "be akumuliatoriaus pakeitimo",
+                     "no battery issues", "be originalios baterijos", "baterija 90%, be jokių defektų",
+                     "be įbrėžimų, baterija 88%"]:
+            self.assertNotIn("be baterijos", self.labels(text), text)
+
 
 class SpecsTest(unittest.TestCase):
     def setUp(self):
@@ -113,3 +136,25 @@ class SpecsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ICloudNegationTest(unittest.TestCase):
+    """Tikras Pirkpard skelbimas: „iCloud paskyra bus atsieta pries pardavima“.
+    Anksciau toks tvarkingas telefonas budavo atmetamas kaip uzrakintas."""
+
+    def setUp(self):
+        reset_config()
+
+    def blokuojantys(self, tekstas):
+        return [d for d, f in find_defects(tekstas) if f == 0]
+
+    def test_promise_to_unlink_is_not_a_defect(self):
+        self.assertEqual(self.blokuojantys("iCloud paskyra bus atsieta prieš pardavimą"), [])
+        self.assertEqual(self.blokuojantys("Parduodu tvarkingą, iCloud bus atrišta"), [])
+        self.assertEqual(self.blokuojantys("iCloud atrištas, viskas veikia"), [])
+
+    def test_real_lock_still_caught(self):
+        self.assertIn("iCloud užraktas",
+                      self.blokuojantys("iCloud užraktas, nežinau slaptažodžio"))
+        self.assertIn("iCloud užraktas",
+                      self.blokuojantys("Telefonas užrakintas, iCloud pririštas prie senos paskyros"))
