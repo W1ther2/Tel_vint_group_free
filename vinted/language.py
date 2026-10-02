@@ -59,6 +59,25 @@ sierra alpine green purple deep space midnight starlight red pink natural titani
 """.split())
 
 
+def lithuanian_score(*texts):
+    """Kiek tekste TIKRAI lietuvisku pozymiu: diakritikai, saknys, trumpi zodziai.
+    0 = nieko lietuviško (pvz. „iPhone 13 128GB“ – tokia antraste beskalbe)."""
+    raw = " ".join(x for x in texts if x).lower()
+    folded = fold(raw)
+    return (2 * len(LITHUANIAN_CHARS & set(raw))
+            + 2 * len(set(_LT_RE.findall(folded)))
+            + len(set(_LT_SHORT.findall(folded))))
+
+
+def looks_lithuanian(*texts, minimum=2):
+    """Ar tekstas tikrai lietuviskas.
+
+    Kitaip nei `detect_foreign_language`, kuri None grazina IR lietuviskam, IR
+    neatpazintam tekstui, cia reikia POZITYVAUS irodymo – bent lietuviskos raides
+    ar saknies. Naudojama tada, kai pardavejo salies nustatyti nepavyko."""
+    return lithuanian_score(*texts) >= minimum
+
+
 def detect_foreign_language(*texts):
     """Kalbos kodas ('PL', 'EN', ..., '??'), jei tekstas ne lietuviskas; None – lietuviskas/nezinoma."""
     raw = " ".join(x for x in texts if x).lower()
@@ -69,9 +88,7 @@ def detect_foreign_language(*texts):
         return "RU"
     allowed = config.allowed_languages()
 
-    lt_score = 2 * len(LITHUANIAN_CHARS & set(raw))
-    lt_score += 2 * len(set(_LT_RE.findall(folded)))
-    lt_score += len(set(_LT_SHORT.findall(folded)))
+    lt_score = lithuanian_score(*texts)
 
     foreign = {}
     for lang, chars in FOREIGN_CHARS.items():
