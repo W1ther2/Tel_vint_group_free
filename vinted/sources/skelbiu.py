@@ -223,12 +223,13 @@ def parse_detail(page, city=None):
     """Skelbimo puslapis -> {status, title, description, photo, condition, seller, model}."""
     if not page:
         return {"status": "unknown"}
-    head = page[:4000]
-    if _GONE_RE.search(head) or _GONE_RE.search(page[:40000]):
+    if _GONE_RE.search(page[:40000]):
         return {"status": "gone"}
     og = {k: html_lib.unescape(v) for k, v in _OG_RE.findall(page)}
     rows = {fold(text_of(k).lower().rstrip(":")): text_of(v) for k, v in _ROW_RE.findall(page)}
     body = _DESCRIPTION_RE.search(page)
+    if not og and not body:
+        return {"status": "unknown"}      # ne skelbimo puslapis (pvz. Cloudflare patikra)
     description = text_of(body.group(1)) if body else og.get("description", "")
 
     seller = {"country": "LT"}
@@ -389,20 +390,23 @@ class SkelbiuClient:
                         return 0, ""
                     backoff = config.cfg["BLOCK_BACKOFF_SECONDS"]
                     pause = backoff[min(attempt - 1, len(backoff) - 1)]
-                    print(f"  ! Skelbiu {r.status_code} ({reason}) – laukiu {pause}s "
-                          f"({attempt}/{tries})...")
-                    self.sleep(pause)
+                    if attempt < tries:
+                        print(f"  ! Skelbiu {r.status_code} ({reason}) – laukiu {pause}s "
+                              f"({attempt}/{tries})...")
+                        self.sleep(pause)
                     continue
                 if r.status_code >= 500:
                     self.last_error = f"Skelbiu HTTP {r.status_code}"
-                    self.sleep(wait * attempt)
+                    if attempt < tries:
+                        self.sleep(wait * attempt)
                     continue
                 self.ok_count += 1
                 return r.status_code, (r.text or "")
             except Exception as e:
                 self.last_error = f"Skelbiu tinklo klaida: {e}"
                 debug(self.last_error)
-                self.sleep(wait * attempt)
+                if attempt < tries:
+                    self.sleep(wait * attempt)
         return 0, ""
 
 
