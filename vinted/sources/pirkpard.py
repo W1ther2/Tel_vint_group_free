@@ -128,9 +128,11 @@ def skip_reason(raw):
 
 
 def listing_state(raw):
-    """'sold' / 'gone' / 'active'."""
+    """'sold' / 'reserved' / 'gone' / 'active'."""
     if raw.get("sold_out") or raw.get("marked_sold_at"):
         return "sold"
+    if raw.get("is_reserved"):
+        return "reserved"
     if raw.get("deleted_at") or raw.get("expired"):
         return "gone"
     if raw.get("is_active") is False:
@@ -176,11 +178,13 @@ class PirkpardClient:
                         print(f"    Pirkpard atsakymas: {body or '(tuscias)'}")
                         return None
                     backoff = config.cfg["BLOCK_BACKOFF_SECONDS"]
-                    self.sleep(backoff[min(attempt - 1, len(backoff) - 1)])
+                    if attempt < tries:
+                        self.sleep(backoff[min(attempt - 1, len(backoff) - 1)])
                     continue
                 if r.status_code >= 500:
                     self.last_error = f"Pirkpard HTTP {r.status_code}"
-                    self.sleep(wait * attempt)
+                    if attempt < tries:
+                        self.sleep(wait * attempt)
                     continue
                 if r.status_code != 200:
                     self.last_error = f"Pirkpard HTTP {r.status_code}"
@@ -194,7 +198,8 @@ class PirkpardClient:
             except Exception as e:
                 self.last_error = f"Pirkpard tinklo klaida: {e}"
                 debug(self.last_error)
-                self.sleep(wait * attempt)
+                if attempt < tries:
+                    self.sleep(wait * attempt)
         return None
 
 
@@ -208,9 +213,10 @@ class PirkpardSource(Source):
         super().__init__()
         self.client = client if client is not None else PirkpardClient(sleep=sleep)
         self._states = None         # {id: "active"/"sold"/"gone"} pardavimu patikrai
+        self._states_complete = False   # ar matem VISA sarasa (iki paskutinio puslapio)
 
     def queries(self):
-        return list(config.cfg["PIRKPARD_QUERIES"])
+        return config.brand_queries(config.cfg["PIRKPARD_QUERIES"])
 
     def describe(self, query):
         return f"'{query}' (visa svetaine)"
@@ -296,24 +302,32 @@ class PirkpardSource(Source):
         if self._states is not None:
             return self._states
         c = config.cfg
-        states, page = {}, 1
+        states, page, complete = {}, 1, False
         while page <= c["PIRKPARD_STATUS_PAGES"]:
-            data = self.client.get_json({"search": c["PIRKPARD_QUERIES"][0] if c["PIRKPARD_QUERIES"] else "iphone",
+            queries = config.brand_queries(c["PIRKPARD_QUERIES"])
+            data = self.client.get_json({"search": queries[0] if queries else "iphone",
                                          "sort": "newest", "include_sold": 1,
                                          "per_page": c["PIRKPARD_PER_PAGE"], "page": page})
             if data is None:
-                break
+                break                       # puslapis nepavyko – likusiu busenos nezinom
             for raw in data["data"]:
                 states[str(raw.get("id"))] = listing_state(raw)
             meta = data.get("meta") or {}
             if not data["data"] or (meta.get("last_page") and page >= meta["last_page"]):
+                complete = True
                 break
             page += 1
-        self._states = states
+        self._states, self._states_complete = states, complete
         return states
 
     def status(self, listing_id, url=None):
+        """Nerastas sarase = istrintas TIK jei matem visa sarasa. Jei 2-as puslapis
+        nepavyko arba skelbimu daugiau nei PIRKPARD_STATUS_PAGES puslapiu, nerastas
+        skelbimas galejo buti tiesiog toliau – tada „unknown“, o ne „parduotas“."""
         states = self.states()
         if not states:
             return "unknown"
-        return states.get(str(listing_id), "gone")
+        found = states.get(str(listing_id))
+        if found:
+            return found
+        return "gone" if self._states_complete else "unknown"
