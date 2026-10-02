@@ -3,30 +3,22 @@
 
 import re
 
-from . import config
+from . import catalog, config
 from .util import fold
 
-ALLOWED_MODELS = {
-    "8", "8 Plus", "X", "XR", "XS", "XS Max",
-    "11", "11 Pro", "11 Pro Max",
-    "12 mini", "12", "12 Pro", "12 Pro Max",
-    "13 mini", "13", "13 Pro", "13 Pro Max",
-    "14", "14 Plus", "14 Pro", "14 Pro Max",
-    "15", "15 Plus", "15 Pro", "15 Pro Max",
-    "16e", "16", "16 Plus", "16 Pro", "16 Pro Max",
-    "17e", "17", "Air", "17 Pro", "17 Pro Max",
-}
-# Modeliu tvarka (sarasams /kainos komandoje)
-MODEL_ORDER = ["8", "8 Plus", "X", "XR", "XS", "XS Max", "11", "11 Pro", "11 Pro Max",
-               "12 mini", "12", "12 Pro", "12 Pro Max", "13 mini", "13", "13 Pro", "13 Pro Max",
-               "14", "14 Plus", "14 Pro", "14 Pro Max", "15", "15 Plus", "15 Pro", "15 Pro Max",
-               "16e", "16", "16 Plus", "16 Pro", "16 Pro Max", "17e", "17", "Air", "17 Pro", "17 Pro Max"]
+APPLE = catalog.APPLE
+ALLOWED_MODELS = set(catalog.APPLE_MIN_PRICES)
+# Modeliu tvarka (sarasams /kainos komandoje) – visi ijungti gamintojai
+MODEL_ORDER = catalog.order()
 
+# Po kartos numerio – ne skaitmuo: „iPhone 128GB“ nera iPhone 12. „x“ – atskiras zodis:
+# „iphone xiaomi“ nera iPhone X. „iPhone 17 Air“ – tai Air, ne 17.
 _MODEL_RE = re.compile(
-    r"\biphone\s*(?P<gen>1[1-7]|8|xs|xr|x|air)\s*(?P<e>e\b)?\s*"
-    r"(?P<var>pro\s*max|promax|pro|max|plus|\+|mini)?"
+    r"\biphone\s*(?P<gen>1[1-7](?!\d)|8(?!\d)|xs(?=max|\b)|xr\b|x\b|air\b)\s*(?P<e>e\b)?\s*"
+    r"(?P<var>pro\s*max|promax|pro|max|plus|\+|mini|air\b)?"
 )
-_VARIANTS = {"promax": "Pro Max", "pro": "Pro", "max": "Max", "plus": "Plus", "+": "Plus", "mini": "mini", "": ""}
+_VARIANTS = {"promax": "Pro Max", "pro": "Pro", "max": "Max", "plus": "Plus", "+": "Plus", "mini": "mini",
+             "air": "Air", "": ""}
 
 
 # Kartos pavadinimai pavadinime (su "iphone" arba be jo): "13", "15pro", "8plus", "6s", "XR"
@@ -55,7 +47,24 @@ def _generations(t):
 
 
 def detect_model(title):
-    """'Apple iPhone 13ProMax 256GB' -> '13 Pro Max'. None, jei nera arba keli skirtingi modeliai."""
+    """'Apple iPhone 13ProMax 256GB' -> '13 Pro Max', 'Samsung S24 Ultra' -> 'Galaxy S24 Ultra'.
+
+    None, jei modelio nera arba paminėti keli skirtingi (ir to paties gamintojo, ir
+    skirtingu: „iPhone ar Samsung dekliukai“ nera telefonas)."""
+    apple = _detect_apple(title)
+    others = catalog.find_models(title, enabled_brands())
+    found = ({apple} if apple else set()) | others
+    return found.pop() if len(found) == 1 else None
+
+
+def enabled_brands():
+    return catalog.enabled(config.cfg.get("BRANDS"))
+
+
+def _detect_apple(title):
+    """Apple atpazinimas: atskiros taisykles, kuriu kiti gamintojai neturi."""
+    if APPLE not in enabled_brands():
+        return None
     t = fold((title or "").lower()).replace("i phone", "iphone")
     if len(_generations(t)) >= 2:
         return None
@@ -66,7 +75,9 @@ def detect_model(title):
         if m.group("e") and gen.isdigit():
             gen += "e"
         var = _VARIANTS[(m.group("var") or "").replace(" ", "")]
-        if gen == "XS" and var == "Max":
+        if var == "Air":
+            name = "Air"                     # „iPhone 17 Air“ – taip daznai vadinamas iPhone Air
+        elif gen == "XS" and var == "Max":
             name = "XS Max"
         elif var == "Max":
             name = f"{gen} Pro Max"          # "iPhone 13 Max" dazniausiai reiskia Pro Max
@@ -78,17 +89,104 @@ def detect_model(title):
 
 
 def normalize_model_name(text):
-    """Vartotojo ivestis ('13 pro max', '13promax', 'xs max') -> '13 Pro Max' arba None."""
-    return detect_model("iphone " + (text or ""))
+    """Vartotojo ivestis -> modelio ID arba None.
+
+    Priimam ir su gamintoju („galaxy s24 ultra“, „xiaomi 14“), ir be jo („13 pro max“,
+    „s24 ultra“, „fold 5“). Kai be gamintojo tinka keli, laimi ankstesnis BRANDS sarase:
+    „14“ yra iPhone 14, o Xiaomi reikia parasyti „xiaomi 14“."""
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    direct = detect_model(raw)
+    if direct:
+        return direct
+    for brand in enabled_brands():
+        if not brand.shorthand:
+            continue                   # „pixel 9“, „xiaomi 14“ – gamintoja reikia parasyti
+        model = detect_model(f"{brand.keywords[0]} {raw}")
+        if model:
+            return model
+    return None
 
 
-# Zodziai BET KUR pavadinime, reiskiantys, kad parduodamas ne veikiantis telefonas
+_WANTED_CACHE = {}
+
+
+def wanted_models():
+    """Modeliai, apie kuriuos siunciam (config MODELS arba /modeliai). Tuscias = visi.
+
+    Grazina ta pacia tvarka, kokia ivedė zmogus, be pasikartojimu. Reiksmes normalizuojamos,
+    tad config.json galima rasyti ir „13 pro max“, ir „13 Pro Max“."""
+    raw = tuple(str(x) for x in (config.cfg.get("MODELS") or []))
+    if raw not in _WANTED_CACHE:
+        out = []
+        for value in raw:
+            model = normalize_model_name(value)
+            if model and model not in out:
+                out.append(model)
+        _WANTED_CACHE.clear()          # kesas tik paskutinei reiksmei – jos keiciasi retai
+        _WANTED_CACHE[raw] = out
+    return _WANTED_CACHE[raw]
+
+
+def model_wanted(model):
+    wanted = wanted_models()
+    return not wanted or model in wanted
+
+
+# Zodziai BET KUR pavadinime, reiskiantys, kad parduodamas ne veikiantis telefonas.
+# „ne kopija“ / „ne replika“ – priesingai, pabrezia, kad telefonas originalus.
 NON_PHONE_RE = re.compile(
     r"\b(?:paveiksl\w*|remel\w*|frame\w*|framed|wall art|art\b|dekor\w*|muliaz\w*|dummy|maket\w*|"
-    r"detal\w*|dalys|dalim\w*|parts?\b|korpus\w*|housing|plokst\w*|motherboard|logic board|mainboard|"
+    r"detal\w*|dalys|dalim\w*|housing|plokst\w*|motherboard|logic board|mainboard|"
     r"lcd|display|ekran\w* (?:iphone|keitim\w*)|tik dezut\w*|dezute be telefono|box only|empty box|"
-    r"tuscia dezut\w*|lipduk\w*|sticker\w*|skin\b|replika|replica|kopija|clone)"
+    r"tuscia dezut\w*|lipduk\w*|sticker\w*|skin\b|clone)"
+    r"|(?<!\bne )\b(?:replik\w*|replica|kopij\w*)"
 )
+# Silpni dalies pozymiai: „iPhone 11 korpusas“ – dalis, bet „iPhone 13, korpusas be ibrezimu“
+# ar „all parts original“ – telefono aprasymas. Sprendziam pagal tai, kas eina po zodzio.
+_WEAK_PART_RE = re.compile(r"\b(?:korpus\w*|parts?)\b")
+_PART_DESCRIBES_PHONE = re.compile(
+    r"^(?:\W+\w+){0,2}?\W+(?:be (?:jokiu )?(?:ibrez|defekt|skilim|subraiz|nubraiz|pazeid|dauz)\w*|"
+    r"su (?:ibrez|smulk)\w*|ideal\w*|tvarking\w*|ger\w*|puik\w*|sveik\w*|nesubraiz\w*|nesudauz\w*|"
+    r"nubrozin\w*|nusitryn\w*|svar\w*|good|great|perfect|mint|excellent)\b")
+_PARTS_ORIGINAL = re.compile(r"^\W+(?:original\w*|work\w*|ok)\b")     # „all parts original / working“
+
+
+def _weak_part(t):
+    """True, jei „korpusas“ / „parts“ pavadinime reiskia parduodama dali, o ne telefona."""
+    if _HAS_STORAGE_RE.search(t):
+        return False                  # talpa pavadinime – telefonas („128GB, korpusas idealus“)
+    for m in _WEAK_PART_RE.finditer(t):
+        after = t[m.end():]
+        if _PART_DESCRIBES_PHONE.match(after):
+            continue
+        if m.group(0).startswith("part") and _PARTS_ORIGINAL.match(after):
+            continue
+        return True
+    return False
+
+
+# Priedo zodis bet kurioje pavadinimo vietoje: „Iphone 17 pro case“, „iPhone 13 MagSafe deklas“.
+# „stiklas“ cia nera – „iPhone 13, stiklas iskiles“ yra telefonas.
+ACCESSORY_ANYWHERE_RE = re.compile(
+    r"\b(?:case|cases|cover|dekl\w*|dekliuk\w*|krovikl\w*|charger|kabel\w*|cable|laidas|laidai|"
+    r"wallet|pinigin\w*|magsafe (?:case|dekl\w*|krovikl\w*|charger|wallet|pinigin\w*|stoveli\w*))\b")
+# Telefonas su priedu: „iPhone 13 + deklas“, „su dekliuku“, „deklas dovanu“
+_BUNDLE_RE = re.compile(r"\+|&|\b(?:su|with|ir|bei|kartu|plius|komplekt\w*|dovan\w*|pridedu|pridedam\w*|"
+                        r"gratis|free|incl\w*|included|iskaitant)\b")
+_HAS_STORAGE_RE = re.compile(r"\b(?:64|128|256|512)\s?(?:gb|g)\b|\b1\s?tb\b")
+
+
+def _accessory_anywhere(t):
+    m = ACCESSORY_ANYWHERE_RE.search(t)
+    if not m:
+        return False
+    # Talpa pavadinime – beveik visada telefonas (dekliukai talpos neturi)
+    if _HAS_STORAGE_RE.search(t):
+        return False
+    # „+ deklas“, „su deklu“, „deklas dovanu“ – telefonas su priedu
+    return not _BUNDLE_RE.search(t)
 
 
 def is_accessory(title):
@@ -97,18 +195,34 @@ def is_accessory(title):
     first = re.split(r"\W+", t, maxsplit=1)[0] if t else ""
     words = [str(w).lower() for w in config.cfg["ACCESSORY_FIRST_WORDS"]]
     if first and any(first.startswith(w) for w in words):
+        # „Baterija 100% iPhone 13“ – telefonas, pavadinime tik pabreztas baterijos procentas
+        if not (first.startswith(("baterij", "battery")) and re.search(r"\d{2,3}\s?%", t)):
+            return True
+    if NON_PHONE_RE.search(t) or _weak_part(t):
         return True
-    if NON_PHONE_RE.search(t):
+    if _accessory_anywhere(t):
         return True
-    return bool(re.search(r"\b(for|skirtas|skirta|tinka|compatible|fur|pour|per)\s+(apple\s+)?iphone", t))
+    return bool(_FOR_PHONE_RE.search(t))
 
 
-# Stiprios frazes APRASYME, kad parduodamas ne telefonas (dezutes, detales, keli vnt.)
+# „for iPhone 13“, „skirtas Samsung Galaxy S23“, „tinka Xiaomi 14“ – tai priedas telefonui
+_FOR_PHONE_RE = re.compile(
+    r"\b(?:for|skirtas|skirta|skirti|tinka|compatible|fur|pour|per)\s+"
+    r"(?:apple\s+|samsung\s+|google\s+)?"
+    r"(?:iphone|galaxy|samsung|xiaomi|redmi|poco|pixel|one\s?plus|huawei)")
+
+
+# Stiprios frazes APRASYME, kad parduodamas ne telefonas (dezutes, detales, keli vnt.).
+# Atsargiai su linksniais: „tik dėklas“ (parduodamas tik deklas) – taip, bet „laikytas tik
+# dėkle“ – ne. „iPhone 13 telefoną“ – ne lotas; „2 telefonai“ / „3 vnt. dėžučių“ – lotas.
+# „kopija“ cia nera: „pridedu čekio kopiją“, „originalus, ne kopija“ – iprasti sakiniai
+# (kopijos pozymis lieka rizikos ivertinime).
 DESCRIPTION_NOT_PHONE_RE = re.compile(
-    r"\b(?:tusci\w* dezut\w*|dezut\w* be telefon\w*|empty box\w*|box only|only (the )?box|tik dezut\w*|"
-    r"be telefono|telefono nera|telefonas nepridedamas|phone not included|tik korpus\w*|tik ekran\w*|"
-    r"tik dekl\w*|paveiksl\w*|remel\w*|framed|kaina uz visas|uz visus|\d+\s?(?:vnt\.?\s)?(?:telefon|dezut)\w*|lotas|lot of|"
-    r"muliaz\w*|dummy|replika|replica|kopija|detalem\w*|atsargin\w* dal\w*|"
+    r"\b(?:tusci\w* dezut\w*|dezut\w* be telefon\w*|empty box\w*|box only|only (the )?box|"
+    r"tik dezut(?:e|es)\b|be telefono\b(?! dekl)|telefono nera|telefonas nepridedamas|phone not included|"
+    r"tik korpus(?:as|a)\b|tik ekran(?:as|a|ai)\b|tik dekl(?:as|ai|a|us)\b|"
+    r"paveiksl(?:as|ai|a|o|u|us)\b|framed|kaina uz vis(?:us|as)\b|uz visus kartu|lotas|lot of|"
+    r"muliaz\w*|dummy|detalem\w*|atsargin\w* dal\w*|"
     # Vinted apgavyste: skelbime telefonas, o parduodamas tik popieriaus lapas / nuotrauka
     r"a4 lapas|a4 formato|lap\w* su (siais |tokiais )?vaizdais|siuntoje (rasite|gausite) tik|"
     r"gausite tik (lapa|lapas|nuotrauk\w*|foto|spaudin\w*|popieri\w*)|"
@@ -116,6 +230,9 @@ DESCRIPTION_NOT_PHONE_RE = re.compile(
     r"tik (popieri\w* )?lapas|tik lapelis|spausdint\w* (lapas|nuotrauk\w*)|popieri\w* lapas|"
     r"sheet of paper|printed (photo|picture|paper)|you are buying (a )?(photo|picture|paper|sheet)|"
     r"not the phone|nera telefonas)"
+    r"|(?<!\bne )\b(?:replika|replica)\b"
+    # keli vienetai: skaicius 2..99 + daugiskaita; ne po „iphone“ (modelio nr.) ir ne „turiu 2 telefonus“
+    r"|(?<!iphone )(?<!turiu )\b(?:[2-9]|[1-9]\d)\s?(?:vnt\.?\s?)?(?:telefon(?:ai|u|us)|dezut(?:es|ciu))\b"
 )
 
 
@@ -125,16 +242,9 @@ def description_not_phone(description):
 
 # Minimali realistiška tvarkingo telefono kaina (~45% iprastos naudoto kainos).
 # Pigiau = beveik visada dezute, dalys, sugedes ar apgavyste. Keiciama config.json "MODEL_MIN_PRICES".
-DEFAULT_MIN_PRICES = {
-    "8": 30, "8 Plus": 35, "X": 40, "XR": 40, "XS": 45, "XS Max": 55,
-    "11": 60, "11 Pro": 70, "11 Pro Max": 85,
-    "12 mini": 65, "12": 75, "12 Pro": 100, "12 Pro Max": 120,
-    "13 mini": 80, "13": 90, "13 Pro": 120, "13 Pro Max": 140,
-    "14": 110, "14 Plus": 120, "14 Pro": 150, "14 Pro Max": 180,
-    "15": 150, "15 Plus": 165, "15 Pro": 200, "15 Pro Max": 240,
-    "16e": 170, "16": 200, "16 Plus": 225, "16 Pro": 280, "16 Pro Max": 320,
-    "17e": 200, "17": 280, "Air": 290, "17 Pro": 380, "17 Pro Max": 450,
-}
+# Lentele – vinted/catalog.py (visi gamintojai vienoje vietoje).
+DEFAULT_MIN_PRICES = {model: price for brand in catalog.BRANDS
+                      for model, price in brand.prices.items()}
 
 
 def typical_price(model):
@@ -149,6 +259,12 @@ def min_price(model):
         return float(custom[model]) if model in custom else float(DEFAULT_MIN_PRICES.get(model, 0))
     except (TypeError, ValueError):
         return float(DEFAULT_MIN_PRICES.get(model, 0))
+
+
+def display(model):
+    """Modelio ID -> kaip rodom zmogui: '13 Pro' -> 'iPhone 13 Pro', o
+    'Galaxy S24 Ultra' lieka toks pat (gamintojas jau pavadinime)."""
+    return catalog.display(model)
 
 
 CONDITION_RANK = {"Nauja su etiketėmis": 5, "Nauja be etikečių": 4, "Labai gera": 3, "Gera": 2, "Patenkinama": 1}
@@ -173,11 +289,16 @@ DEFECT_PATTERNS = [
      r"(?! (?:problem|keit|pakeit|bed|defekt|gedim|nusidev|susidev|sveikat|degrad|isnaud|issues?|replace|health)\w*)",
      "be baterijos", 0.0),
     (r"dalims|for parts|parts only|detalem\w*|donor\w*", "dalims", 0.0),
-    (r"(prasyt?\w*|praso|reikia|nezin\w*|pamirs\w*|ivesti|uzrakint\w*) (\w+ ){0,3}(kod\w*|slaptazod\w*|pin\w*)|"
-     r"(kod\w*|slaptazod\w*) (\w+ ){0,3}(nezin\w*|pamirs\w*)|passcode|activation lock|aktyvacij\w* uzrakt\w*",
+    # „kodą/kodo“, „PIN“, „PIN kodą“ – bet ne „kodėl“ ir ne „pinigų“ („reikia pinigų“ ≠ užrakintas)
+    (r"(prasyt?\w*|praso|reikia|nezin\w*|pamirs\w*|ivesti|uzrakint\w*) (\w+ ){0,3}"
+     r"(kod(?:as|o|a|u|ai|us)\b|slaptazod\w*|pin\b|pin\s?kod\w*)|"
+     r"(kod(?:as|o|a|u|ai|us)|slaptazod\w*) (\w+ ){0,3}(nezin\w*|pamirs\w*)|passcode|activation lock|"
+     r"aktyvacij\w* uzrakt\w*",
      "užrakintas kodu", 0.0),
+    # „parduodu kaip yra“ = netestuotas; „būklė tokia, kaip yra nuotraukose“ – ne
     (r"netestuot\w*|neistestuot\w*|netikrint\w*|nepatikrint\w*|untested|not tested|nezinau ar veikia|"
-     r"nezinom\w* ar veikia|kaip yra", "netestuotas", 0.0),
+     r"nezinom\w* ar veikia|sold as.is|kaip yra\b(?!,?\s*(?:nuotrauk|foto|matyt|matosi|pavaizd|aprasyt|parasyt))",
+     "netestuotas", 0.0),
     (r"neisijung\w*|nesijung\w*|neuzsikraun\w*|nesikrauna\w*|nekrauna|nekraun\w*|won.?t turn on|"
      r"does ?n.?t turn on|no power|juodas ekranas|black screen|bootloop|persikraun\w*|uzstring\w*",
      "neįsijungia / nesikrauna", 0.0),
@@ -192,7 +313,7 @@ DEFECT_PATTERNS = [
     (r"broken", "sugedęs (broken)", 0.55),
     (r"sugad\w*|sugedes|sugedo", "sugedęs", 0.55),
     (r"damaged|water damage|sulyt\w*|pasemt\w*|dregm\w*", "pažeistas", 0.60),
-    (r"no face ?id|be face ?id|face ?id neveik\w*", "neveikia Face ID", 0.75),
+    (r"no face ?id|be face ?id|face ?id neveik\w*|neveik\w* face ?id", "neveikia Face ID", 0.75),
     (r"neveik\w*|not working|doesn.?t work", "kažkas neveikia", 0.70),
     (r"keist\w* ekran\w*|replaced screen|neoriginal\w* ekran\w*|ne originalus ekranas", "keistas ekranas", 0.85),
     (r"keist\w* baterij\w*|neoriginal\w* baterij\w*|service battery", "keista baterija", 0.92),
@@ -204,16 +325,32 @@ _DEFECT_RE = [(re.compile(r"\b(?:" + p + r")"), label, f) for p, label, f in DEF
 _NE_IS_DEFECT = {"kažkas neveikia", "neveikia Face ID", "neįsijungia / nesikrauna", "netestuotas",
                  "užrakintas kodu", "ekrano gedimas", "neaiški kilmė", "be baterijos"}
 _NEGATION_IS_DEFECT = {"be baterijos"}
-_NEGATE_BEFORE = {"be", "nera", "no", "not", "without", "jokiu", "jokio", "nieko", "neturi", "zero", "0"}
-# Zodziai PO defekto, kurie ji paneigia: "iCloud atristas", "iCloud paskyra bus atsieta".
+# Neiginiai PRIES defekta: „be įskilimų“, „nebuvo daužtas“, „niekada nebuvo taisytas“
+_NEGATE_BEFORE = {"be", "nera", "no", "not", "without", "jokiu", "jokio", "nieko", "neturi", "zero", "0",
+                  "nebuvo", "niekada", "niekad", "nei", "never", "nebus"}
+# Zodziai PO defekto, kurie ji paneigia: "iCloud atristas", "defektų neturi".
 # Tokia formuluote lietuviskuose skelbimuose iprasta, todel ziurim kelis zodzius i prieki.
-_NEGATE_AFTER = {"atristas", "atrista", "atrista", "atrisiu", "atrisamas",
+_NEGATE_AFTER = {"atristas", "atrista", "atrisiu", "atrisamas",
                  "atsietas", "atsieta", "atsiesiu", "atsiejamas",
                  "laisvas", "isjungtas", "isjungta", "nera", "free", "off",
                  "clean", "unlocked", "nepriristas", "neprisietas",
                  "atrakintas", "atrakinta", "pasalintas", "pasalinta",
-                 "islogintas", "isloginta", "removed"}
+                 "islogintas", "isloginta", "removed",
+                 "neturi", "neturiu", "nepastebeta", "nepastebejau", "nerasta", "none"}
 _NEGATE_AFTER_WORDS = 4
+# Uzrakto etiketems paneigimas gali buti ir PRIES zodi: „atrištas nuo iCloud“, „iCloud švarus“.
+_LOCK_LABELS = {"iCloud užraktas", "užblokuotas", "užrakintas kodu"}
+_UNLINK_STEMS = ("atrist", "atsiet", "atjung", "atsijung", "islogin", "atsilogin", "isjung", "nepririst",
+                 "neprisiet", "atrakint", "pasalint", "laisv", "svarus", "svari", "svaru", "clean", "free",
+                 "unlock", "remov")
+_LOCK_STEMS = ("uzrakint", "uzblok", "uzbl", "blokuot", "blukuot", "locked", "pririst", "prisiet")
+# „Apsauginis stikliukas įskilęs, ekranas sveikas“ – skilo apsauga, ne telefonas
+_CRACK_LABELS = {"skilęs", "įskilęs (cracked)", "sudaužtas"}
+_PROTECTOR_STEMS = ("apsaug", "stikliuk", "plevel", "protector", "dekl", "case")
+
+
+def _words(text):
+    return [w.strip(",.;:!-()") for w in text.split()]
 
 
 def find_defects(*texts):
@@ -223,16 +360,27 @@ def find_defects(*texts):
     for rx, label, factor in _DEFECT_RE:
         for m in rx.finditer(t):
             clause = re.split(r"[.,;!?\n]|\bbet\b|\bbut\b", t[:m.start()])[-1]
-            before = {w.strip(",.;:!-()") for w in clause.split()[-4:]}
-            after = {w.strip(",.;:!-()") for w in
-                     re.split(r"[.,;!?\n]", t[m.end():])[0].split()[:_NEGATE_AFTER_WORDS]}
+            before_list = _words(clause)[-4:]
+            before = set(before_list)
+            after_list = _words(re.split(r"[.,;!?\n]|\bbet\b|\bbut\b", t[m.end():])[0])[:_NEGATE_AFTER_WORDS]
+            after = set(after_list)
             inside = set(t[m.start():m.end()].split())
             # „be akumo“ – pats „be“ ir yra defektas, tad cia paneigimo nebetikrinam
             negation_is_defect = label in _NEGATION_IS_DEFECT
             if not negation_is_defect and (before & _NEGATE_BEFORE or inside & _NEGATE_BEFORE):
                 continue
-            if after & _NEGATE_AFTER:
-                continue
+            if label in _LOCK_LABELS:
+                # „iCloud užrakintas bus atrištas“ – pirmas zodis po jo sako, kad DABAR uzrakintas:
+                # tolesni pazadai atristi jo nepaneigia
+                locked_now = bool(after_list) and after_list[0].startswith(_LOCK_STEMS)
+                if not locked_now and (any(w.startswith(_UNLINK_STEMS) for w in before_list + after_list)
+                                       or after & _NEGATE_AFTER):
+                    continue
+            else:
+                if label in _CRACK_LABELS and any(w.startswith(_PROTECTOR_STEMS) for w in before_list):
+                    continue
+                if after & _NEGATE_AFTER:
+                    continue
             # "nesudaužytas", "neskilęs" = paneigimas; bet "neveikia", "neįsijungia" – pats defektas
             if label not in _NE_IS_DEFECT and t[m.start():m.end()].startswith("ne"):
                 continue
@@ -265,9 +413,12 @@ def normalize_storage(text):
 
 def extract_battery(*texts):
     t = fold(" ".join(x for x in texts if x).lower())
+    # „87%“, „87 proc.“, „87 procentai“
+    pct = r"\s?(?:%|proc\b\.?|procent\w*)"
     pats = [
-        r"(?:baterij\w*|akumuliator\w*|battery(?: health)?|\bbh\b|\bbat\b\.?|sveikat\w*|talpa)\D{0,20}?(\d{2,3})\s?%",
-        r"(\d{2,3})\s?%\s?(?:baterij\w*|battery|\bbh\b|sveikat\w*|talp\w*)",
+        r"(?:baterij\w*|akumuliator\w*|battery(?: health)?|\bbh\b|\bbat\b\.?|sveikat\w*|talpa)\D{0,20}?(\d{2,3})"
+        + pct,
+        r"(\d{2,3})" + pct + r"\s?(?:baterij\w*|battery|\bbh\b|sveikat\w*|talp\w*)",
     ]
     for pat in pats:
         m = re.search(pat, t)

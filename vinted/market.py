@@ -4,16 +4,23 @@
 Kiekvienas matytas telefonas saugomas state.json:
   {"m": modelis, "s": talpa, "p": dabartine kaina, "pp": ankstesne kaina,
    "f": pirma diena, "l": paskutine diena kataloge, "c": paskutinio patikrinimo diena,
-   "st": "active"/"sold"/"gone", "sd": pardavimo diena, "a": kaina, uz kuria jau pranesta}
+   "st": "active"/"sold"/"gone", "sd": pardavimo diena, "a": kaina, uz kuria jau pranesta,
+   "ev": kaina, uz kuria paskutini karta vertinom, "sh": pardavejo maisos kodas,
+   "x": kodel netinka rinkos kainai (uzrakintas, ne telefonas...), "rl": 1 = dingo, nes ikeltas is naujo}
 Dienos – sveikas skaicius (dienos nuo 1970-01-01).
 """
 
 import functools
+import hashlib
+import statistics
 import threading
+import time
 from dataclasses import dataclass
 
 from . import config
 from .phone import detect_model, extract_storage, is_accessory, find_defects, condition_ok, min_price, typical_price
+from . import liquidity
+from .confidence import ask_quote, assess, learn_levels
 from .util import today, median, percentile
 
 
@@ -27,10 +34,42 @@ def trimmed(values):
 
 @dataclass
 class Quote:
+    """Rinkos kaina. DU masteliai (v49):
+
+    ask   – PRASOMU kainu masteliu: tiek, kiek panasus telefonai prasomi / uz kiek ju
+            skelbimai uzsidaro. Tai, ka is tikruju matom Vinted.
+    price – VERTE = ask x sale_factor (ASKING_SALE_FACTOR). Sandorio kainos Vinted nerodo,
+            tad sis daugiklis yra NEPATIKRINTA PRIELAIDA, o ne ismatuotas dydis.
+
+    Iki v49 „parduoti“ saltinis grazindavo prasomu masteli (dingusiu skelbimu paskutines
+    prasomos), o „skelbimai“ – jau padaugintą is 0,85: ta pati rinka gaudavo ~x1,17
+    skirtinga kaina priklausomai nuo saltinio (gyvai: iPhone 13 174 € vs 157 €)."""
     price: float
     samples: int          # -1 = rankine kaina (config / Telegram)
-    source: str           # "rankinė" / "parduoti" / "skelbimai"
+    source: str           # "rankinė" / "parduoti" / "skelbimai" / "apytikslė"
     by_storage: bool
+    # Kainu sklaida imtyje (standartinis nuokrypis / mediana). Gyvai matuota: kai sklaida
+    # < 0,15, 80 % rinkos kainos klaidu neviršija 7 %, o kai > 0,25 – siekia 33 %.
+    # None – sklaidos nezinom (rankine kaina, per maza imtis). Zr. vinted/confidence.py.
+    spread: float = None
+    ask: float = None     # prasomu masteliu (zr. aukščiau); None – senas objektas
+
+    def __post_init__(self):
+        if self.ask is None and self.price:
+            self.ask = self.price / sale_factor_assumption()
+
+
+def sale_factor_assumption():
+    """Prasoma -> sandorio kaina. NEPATIKRINTA prielaida (Vinted sandorio kainos nerodo)."""
+    return float(config.cfg["ASKING_SALE_FACTOR"])
+
+
+def spread_of(values):
+    """Sklaida = standartinis nuokrypis / mediana (None, kai reiksmiu maziau nei 3)."""
+    if len(values) < 3:
+        return None
+    med = median(values)
+    return round(statistics.pstdev(values) / med, 4) if med else None
 
 
 @dataclass
@@ -42,6 +81,15 @@ class Rank:
     high: float           # brangiausias tarp ju
     share: float          # kokia dalis KITU yra pigesni (0.0 = pigiausias)
     by_storage: bool      # lyginta su ta pacia talpa ar su visu modeliu
+    peer_low: float = None  # pigiausias tarp KITU (be sio) – ar sis ne itartinai pigesnis
+
+
+def seller_hash(source, seller_id):
+    """Pardavejo ID saugom tik kaip trumpa maisos koda: pakanka atpazinti ta pati
+    pardaveja (pakartotinai ikeltas skelbimas), bet paties ID state.json nelieka."""
+    if not seller_id:
+        return None
+    return hashlib.sha1(f"{source}|{seller_id}".encode()).hexdigest()[:10]
 
 
 def with_source(key):
@@ -77,10 +125,34 @@ class Market:
             self.calibration = float(data.get("calibration") or 1.0)
         except (TypeError, ValueError):
             self.calibration = 1.0
+        # Kalibruojama ne dazniau nei karta per diena (paleidimai – kas 10 min.)
+        self.calibrated_day = data.get("calibrated_day")
+        # Patikimumo lygiu reiksmes, ismoktos is PATVIRTINTU pardavimu (confidence.learn_levels).
+        # Kol ju nera – naudojamos pradines (confidence.PRIOR).
+        self.confidence_bands = data.get("confidence_bands") or {}
+        # Pardavimo faktas pagal kaina/rinka (vinted/liquidity.py) – tik matavimas.
+        self.sale_fact = data.get("sale_fact") or {}
+        # Ilgalaikio archyvo ivykiai siame paleidime (zr. vinted/archive.py). I state.json
+        # nerasomi – paleidimo gale perkeliami i archyva.
+        self.events = []
 
     @locked
     def to_dict(self):
-        return {"items": self.items, "calibration": self.calibration}
+        return {"items": self.items, "calibration": self.calibration, "calibrated_day": self.calibrated_day,
+                "confidence_bands": self.confidence_bands, "sale_fact": self.sale_fact}
+
+    # --- archyvas -------------------------------------------------------------
+    def _event(self, kind, iid, day, **fields):
+        """Vienas archyvo ivykis (kvieciama jau su spyna)."""
+        event = {"t": int(time.time()), "d": day, "e": kind, "id": iid}
+        event.update({k: v for k, v in fields.items() if v is not None})
+        self.events.append(event)
+
+    @locked
+    def drain_events(self):
+        """Siame paleidime surinkti ivykiai archyvui (ir isvalo ju sarasa)."""
+        out, self.events = self.events, []
+        return out
 
     def sale_factor(self):
         """Prasoma kaina -> reali pardavimo kaina, patikslinta pagal tikrus pardavimus."""
@@ -111,34 +183,66 @@ class Market:
             if not condition_ok(l.condition, "Gera"):      # patenkinamos bukles – ne rinkos kaina
                 continue
             iid = l.uid
+            # Skelbimas, kurio pardavejo salies nustatyti nepavyko, i Lietuvos rinkos kaina
+            # neitraukiamas, kol salis nepatvirtinta (`confirm_country`). Gyvai matyta, kad
+            # „iphone“ sarase Lietuvos yra tik ~11 %, tad nepatikrintas skelbimas dazniausiai
+            # yra uzsienio. Irasa vis tiek saugom: kitaip nebematytume atpigimu.
+            unverified = "salis?" if l.country_unverified else None
             e = self.items.get(iid)
             if e is None:
                 storage = extract_storage(title) or ""
                 entry = {"m": model, "s": storage, "p": round(price, 2),
                          "f": day, "l": day, "c": day, "st": "active"}
+                if unverified:
+                    entry["x"] = unverified
+                sh = seller_hash(l.source, l.seller_id)
+                if sh:
+                    entry["sh"] = sh
                 if l.source != "vinted":
                     # Vinted adresa galima atkurti is ID, kitiems saltiniams – ne
                     entry["u"] = l.url
                 if (model, storage) not in quotes:
                     quotes[(model, storage)] = self.quote(model, storage or None, day)
                 q = quotes[(model, storage)]
+                conf = None
                 if q is not None and q.price > 0:
                     entry["q"] = round(q.price, 2)               # ka spejom si telefona vertant
                     entry["qs"] = SOURCE_CODE.get(q.source, "?")
+                    # Ta pati kaina PRASOMU masteliu – su ja lyginama uzsidarymo kaina (v49).
+                    entry["qa"] = round(q.ask, 2)
+                    # Patikimumas TUO METU: veliau, kai pardavimas bus PATVIRTINTAS, is to
+                    # mokomasi, kiek kiekvieno lygio kaina is tikruju pasiteisina (learn_levels).
+                    conf = assess(q, self.confidence_bands)
+                    entry["qc"] = conf.code
                     if entry["qs"] == "s":
                         # Koks pataisymas tuomet galiojo. Be sito nezinotume, kokia buvo
                         # "zalia" skelbimu kaina, ir kalibruotume nuo jau pataisyto skaiciaus –
                         # tas pats pardavimas pataisyma nustumtu kelis kartus is eiles.
                         entry["qf"] = round(self.sale_factor(), 4)
                 self.items[iid] = entry
+                self._event("obs", iid, day, src=l.source, m=model, s=storage or None,
+                            p=entry["p"], q=entry.get("q"), qa=entry.get("qa"), qs=entry.get("qs"),
+                            qn=q.samples if q is not None else None,
+                            qsp=q.spread if q is not None else None,
+                            qc=entry.get("qc"), qb=conf.band if conf else None,
+                            qsf=conf.factor if conf else None,
+                            cu=1 if unverified else None, sh=entry.get("sh"),
+                            u=entry.get("u"), dt=l.created_at)
                 continue
-            if price < e["p"] - 0.01:
-                drops[iid] = e["p"]
+            if not unverified and e.get("x") == "salis?":
+                e.pop("x", None)              # salis paaiskejo (pvz. is pardaveju atminties)
+            # Atpigimas skaiciuojamas nuo kainos, uz kuria paskutini karta VERTINOM – kitaip
+            # 300 -> 290 -> 280 -> 270 (kiekviena karta < 5 %) niekada nebutu pastebeta.
+            ref = e.get("ev") or e["p"]
+            if price < ref - 0.01:
+                drops[iid] = ref
             if abs(price - e["p"]) > 0.01:
                 e["pp"] = e["p"]
                 e["p"] = round(price, 2)
+                self._event("price", iid, day, p=e["p"], pp=e["pp"])
             e["l"] = day
             if e.get("st") != "active":
+                self._event("status", iid, day, st="active", was=e.get("st"))
                 e["st"] = "active"
                 e.pop("sd", None)
         return drops
@@ -149,9 +253,41 @@ class Market:
 
     @locked
     def mark_alerted(self, item_id, price):
-        e = self.items.get(with_source(str(item_id)))
+        iid = with_source(str(item_id))
+        e = self.items.get(iid)
         if e is not None:
             e["a"] = round(price, 2)
+            self._event("alert", iid, today(), p=e["a"], q=e.get("q"), qc=e.get("qc"))
+
+    @locked
+    def mark_evaluated(self, item_id, price):
+        e = self.items.get(with_source(str(item_id)))
+        if e is not None and price is not None:
+            e["ev"] = round(price, 2)
+
+    @locked
+    def exclude(self, item_id, reason):
+        """Skelbimas netinka rinkos kainai (uzrakintas, sugedes, ne telefonas, uzsienio).
+        Jis nebeskaiciuojamas nei i vieta tarp pigiausiu, nei i rinkos kaina."""
+        iid = with_source(str(item_id))
+        e = self.items.get(iid)
+        if e is not None:
+            if e.get("x") != reason and reason != "salis?":
+                self._event("x", iid, today(), x=reason)
+            e["x"] = reason
+
+    @locked
+    def needs_country(self, item_id):
+        """True, jei irasas laukia salies patvirtinimo (kol kas neskaiciuojamas i rinka)."""
+        e = self.items.get(with_source(str(item_id)))
+        return bool(e) and e.get("x") == "salis?"
+
+    @locked
+    def confirm_country(self, item_id):
+        """Salis patikrinta ir tinka – irasas vel skaiciuojamas i rinkos kaina."""
+        e = self.items.get(with_source(str(item_id)))
+        if e is not None and e.get("x") == "salis?":
+            e.pop("x", None)
 
     @locked
     def already_alerted_at(self, item_id, price):
@@ -164,21 +300,52 @@ class Market:
     # --- pardavimu tikrinimas ---------------------------------------------
     @locked
     def sold_check_candidates(self, day=None):
-        """Aktyvus skelbimai, kuriu kataloge seniai nematem ir siandien netikrinom."""
+        """Aktyvus skelbimai, kuriu kataloge nematem bent SOLD_CHECK_AFTER_DAYS ir siandien
+        netikrinom.
+
+        Tvarka – del pardavimu TIESOS (v48). Is 717 „parduotu“ tik 4 Vinted tikrai parode
+        „parduota“: kiti buvo patikrinti tik po 2 dienu, kai puslapio jau nebuvo (404 =
+        „dingo“, galejo buti ir istrintas). Todel:
+        1. pirmiau tie, kuriems zinomas tuometinis patikimumo lygis (`qc`) – tik is ju
+           confidence modelis gali mokytis (zr. confidence.learn_levels);
+        2. tarp ju – ilgiausiai netikrinti (`c`);
+        3. tarp tu – neseniausiai dinge: ju puslapis greiciausiai dar rodo „parduota“.
+        Tą pačią dieną dingimas nieko nereiskia – skelbimas galejo tiesiog nepatekti i
+        perziuretus puslapius – tad tikrinama ne anksciau nei kita diena."""
         day = day if day is not None else today()
-        after = config.cfg["SOLD_CHECK_AFTER_DAYS"]
-        cands = [(e.get("c", 0), iid) for iid, e in self.items.items()
-                 if e.get("st") == "active" and day - e.get("l", day) >= after and e.get("c", 0) < day]
+        after = max(1, int(config.cfg["SOLD_CHECK_AFTER_DAYS"]))
+        cands = [((0 if e.get("qc") else 1), e.get("c", 0), -e.get("l", 0), iid)
+                 for iid, e in self.items.items()
+                 if e.get("st") == "active" and not e.get("x")
+                 and day - e.get("l", day) >= after and e.get("c", 0) < day]
         cands.sort()
-        return [iid for _, iid in cands[: config.cfg["SOLD_CHECKS_PER_RUN"]]]
+        return [c[-1] for c in cands[: config.cfg["SOLD_CHECKS_PER_RUN"]]]
 
     @locked
     def set_status(self, item_id, status, day=None):
         day = day if day is not None else today()
-        e = self.items.get(with_source(str(item_id)))
+        iid = with_source(str(item_id))
+        e = self.items.get(iid)
         if e is None:
             return
         e["c"] = day
+        if status == "active":
+            # Puslapis sako „vis dar parduodamas“. Kataloge jo gal ir nebematom (botas mato tik
+            # naujausius puslapius), bet pardavimo faktui (liquidity) tai – zinoma baigtis.
+            e["ca"] = day
+        relist = status == "gone" and self._relisted(item_id, e)
+        if status not in ("active", "unknown"):
+            # Archyve – tai, ka pasake puslapis, ne musu isvada (GONE_AS_SOLD). Kitaip
+            # „dingo“ ir „tikrai parduota“ susilietu, o butent ju skirtumas svarbiausias.
+            self._event("status", iid, day, st="relist" if relist else status, p=e.get("p"),
+                        age=day - e.get("f", day), unseen=day - e.get("l", day))
+        if relist:
+            # Tas pats pardavejas ikele ta pati telefona is naujo (Vinted daznai taip „pakelia“
+            # skelbima). Tai ne pardavimas – kitaip prasoma kaina patektu i „parduotu“ kainas.
+            e["st"], e["rl"] = "gone", 1
+            e.pop("sd", None)
+            e.pop("sv", None)
+            return
         if status == "sold" or (status == "gone" and config.cfg["GONE_AS_SOLD"]):
             e["st"], e["sd"] = "sold", day
             # "sv" = ar tikrai parduotas (puslapis taip sako), ar tik dingo (galejo buti istrintas).
@@ -187,22 +354,43 @@ class Market:
         elif status == "gone":
             e["st"] = "gone"
 
+    def _relisted(self, item_id, e):
+        """Ar yra naujesnis to paties pardavejo aktyvus skelbimas: tas pats modelis,
+        talpa ir panasi kaina (+-20 %)."""
+        sh = e.get("sh")
+        if not sh:
+            return False
+        uid = with_source(str(item_id))
+        for oid, o in self.items.items():
+            if oid == uid or o.get("sh") != sh or o.get("st") != "active":
+                continue
+            if o.get("m") == e.get("m") and o.get("s") == e.get("s") and o.get("f", 0) >= e.get("f", 0) \
+                    and abs(o["p"] - e["p"]) <= 0.2 * e["p"]:
+                return True
+        return False
+
     # --- rinkos kaina -------------------------------------------------------
     @locked
-    def quote(self, model, storage, day=None):
-        """Rinkos kaina. Pirmenybe: rankine > tikri pardavimai > prasomos kainos."""
+    def quote(self, model, storage, day=None, manual=True):
+        """Rinkos kaina. Pirmenybe: rankine > tikri pardavimai > prasomos kainos.
+        manual=False – tik is duomenu (rankines kainos patikrai)."""
         c = config.cfg
         day = day if day is not None else today()
-        manual = config.market_prices()
-        if storage and f"{model}|{storage}" in manual:
-            return Quote(manual[f"{model}|{storage}"], -1, "rankinė", True)
-        if model in manual:
-            return Quote(manual[model], -1, "rankinė", False)
+        prices = config.market_prices() if manual else {}
+        # Rankine kaina – zmogaus nurodyta VERTE (tuo paciu masteliu kaip `price`).
+        sf = self.sale_factor()
+        if storage and f"{model}|{storage}" in prices:
+            v = prices[f"{model}|{storage}"]
+            return Quote(v, -1, "rankinė", True, None, v / sf)
+        if model in prices:
+            return Quote(prices[model], -1, "rankinė", False, None, prices[model] / sf)
 
-        def values(status, max_age, by_storage, day_key, max_life=None):
+        def values(status, max_age, by_storage, day_key, max_life=None, confirmed=False):
             out = []
             for e in self.items.values():
-                if e["m"] != model or e.get("st") != status:
+                if e["m"] != model or e.get("st") != status or e.get("x"):
+                    continue
+                if confirmed and not e.get("sv"):
                     continue
                 if by_storage and e.get("s") != storage:
                     continue
@@ -215,16 +403,26 @@ class Market:
             return out
 
         if c["USE_SOLD_PRICES"]:
+            # Pirmiausia – patvirtinti pardavimai (puslapis sako „parduota“). Dinge skelbimai
+            # (GONE_AS_SOLD) – tik kai patvirtintu per mazai: dalis ju buvo tiesiog istrinti.
             for by_storage in ([True, False] if storage else [False]):
-                sold = trimmed(values("sold", c["SOLD_HISTORY_DAYS"], by_storage, "sd"))
-                if len(sold) >= c["MIN_SOLD_SAMPLES"]:
-                    return Quote(median(sold), len(sold), "parduoti", by_storage)
+                for confirmed in (True, False):
+                    sold = trimmed(values("sold", c["SOLD_HISTORY_DAYS"], by_storage, "sd",
+                                          confirmed=confirmed))
+                    if len(sold) >= c["MIN_SOLD_SAMPLES"]:
+                        # Uzsidariusiu skelbimu PASKUTINES PRASOMOS kainos – ne sandorio. Todel
+                        # verte, kaip ir is skelbimu, = prasoma x prielaida (iki v49 – be jos).
+                        ask = median(sold)
+                        # MARKET_SCALE_UNIFIED=false (numatyta): gyva verte kaip iki v49 – be
+                        # daugiklio. Matavimui ir mokymui vis tiek naudojamas `ask`.
+                        value = ask * sf if c["MARKET_SCALE_UNIFIED"] else ask
+                        return Quote(value, len(sold), "parduoti", by_storage, spread_of(sold), ask)
         for by_storage in ([True, False] if storage else [False]):
             asking = trimmed(values("active", c["PRICE_HISTORY_DAYS"], by_storage, "l",
                                     max_life=c["ASKING_MAX_AGE_DAYS"]))
             if len(asking) >= c["MIN_SAMPLES"]:
-                price = percentile(asking, c["MARKET_PERCENTILE"]) * self.sale_factor()
-                return Quote(price, len(asking), "skelbimai", by_storage)
+                ask = percentile(asking, c["MARKET_PERCENTILE"])
+                return Quote(ask * sf, len(asking), "skelbimai", by_storage, spread_of(asking), ask)
         # Retiems modeliams (16e, 14 Plus, Air...) skelbimu per mazai – naudojam apytiksle kaina,
         # o jei keli skelbimai jau yra – vidurki tarp ju ir apytiksles kainos.
         if c["USE_TYPICAL_FALLBACK"] and typical_price(model):
@@ -233,7 +431,8 @@ class Market:
             guess = typical_price(model)
             if len(asking) >= 3:
                 guess = (guess + percentile(asking, c["MARKET_PERCENTILE"]) * self.sale_factor()) / 2
-            return Quote(guess, len(asking), "apytikslė", False)
+            # Lentele (v45) = percentile(prasomos) x ASKING_SALE_FACTOR, t. y. jau verte.
+            return Quote(guess, len(asking), "apytikslė", False, spread_of(asking), guess / sf)
         return None
 
     # --- vieta tarp siuo metu parduodamu --------------------------------------
@@ -250,7 +449,7 @@ class Market:
         def peers(by_storage):
             out = []
             for uid, e in self.items.items():
-                if uid == exclude or e["m"] != model or e.get("st") != "active":
+                if uid == exclude or e["m"] != model or e.get("st") != "active" or e.get("x"):
                     continue
                 if by_storage and e.get("s") != storage:
                     continue
@@ -272,7 +471,7 @@ class Market:
             cheaper = sum(1 for p in prices if p < price - 0.01)
             everyone = prices + [price]
             return Rank(place=cheaper + 1, n=len(everyone), low=min(everyone), high=max(everyone),
-                        share=cheaper / len(prices), by_storage=by_storage)
+                        share=cheaper / len(prices), by_storage=by_storage, peer_low=min(prices))
         return None
 
     # --- tikslumas ir savikalibracija -----------------------------------------
@@ -285,14 +484,17 @@ class Market:
         c = config.cfg
         out = []
         for e in self.items.values():
-            if e.get("st") != "sold" or not e.get("q") or e.get("qs") != "s":
+            if e.get("st") != "sold" or not e.get("q") or e.get("qs") != "s" or e.get("x"):
                 continue
             if day - e.get("sd", day) > c["SOLD_HISTORY_DAYS"]:
                 continue
             if confirmed_only and not e.get("sv"):
                 continue
+            # v49: abu PRASOMU masteliu (uzsidarymo kaina / musu prasoma rinkos kaina).
+            # Anksciau p/q lygino prasoma su jau padauginta is 0,85 – santykis issipusdavo ~x1,18.
+            qa = ask_quote(e)
             factor = e["p"] * e["qf"] / e["q"] if e.get("qf") else None
-            out.append((e["m"], e["p"] / e["q"], factor))
+            out.append((e["m"], e["p"] / qa, factor))
         return out
 
     @locked
@@ -331,9 +533,13 @@ class Market:
         c = config.cfg
         if not c["AUTO_CALIBRATE"]:
             return None
+        day = day if day is not None else today()
         data = self.accuracy(day)
         if data["n_target"] < c["MIN_CALIBRATION_SAMPLES"] or not data["target"]:
             return None
+        if self.calibrated_day == day:
+            return None           # siandien jau zengta – CALIBRATION_MAX_STEP galioja per diena
+        self.calibrated_day = day
         wanted = data["target"] / c["ASKING_SALE_FACTOR"]      # koks pataisymas butu teisingas
         step = c["CALIBRATION_MAX_STEP"]
         target = max(self.calibration * (1 - step), min(self.calibration * (1 + step), wanted))
@@ -342,8 +548,31 @@ class Market:
         return {"old": old, "new": self.calibration, "wanted": round(wanted, 4), **data}
 
     @locked
+    def learn_confidence(self, day=None):
+        """Patikimumo lygiu paklaidos is parduotu (karta per diena). Grazina naujas."""
+        day = day if day is not None else today()
+        if self.confidence_bands.get("day") == day:
+            return None
+        self.confidence_bands = learn_levels(self.items, day)
+        return self.confidence_bands
+
+    @locked
+    def learn_sale_fact(self, day=None):
+        """Pardavimo faktas (vinted/liquidity.py) – karta per diena, SAVO dienos zyma.
+
+        Iki v49.1 jis buvo skaiciuojamas learn_confidence() viduje, uz jos „jau siandien“
+        patikros: v47/v48 ta zyma siandienai jau buvo irase, tad v49 fakto neskaiciavo
+        (gyvai: sale_fact = {}). Atskira zyma – kad vieno mokymo busena neuzblokuotu kito."""
+        day = day if day is not None else today()
+        if self.sale_fact.get("day") == day:
+            return None
+        self.sale_fact = liquidity.learn(self.items, day)
+        return self.sale_fact
+
+    @locked
     def sample_count(self, model):
-        return sum(1 for e in self.items.values() if e["m"] == model and e.get("st") == "active")
+        return sum(1 for e in self.items.values()
+                   if e["m"] == model and e.get("st") == "active" and not e.get("x"))
 
     @locked
     def price_check(self, model, storage, price, day=None):
@@ -358,6 +587,8 @@ class Market:
         day = day if day is not None else today()
         by_model = {}
         for e in self.items.values():
+            if e.get("x"):
+                continue
             d = by_model.setdefault(e["m"], {"active": [], "sold": []})
             if (e.get("st") == "active" and day - e.get("l", day) <= c["PRICE_HISTORY_DAYS"]
                     and day - e.get("f", day) <= c["ASKING_MAX_AGE_DAYS"]):
@@ -367,8 +598,11 @@ class Market:
         out = []
         for model, d in by_model.items():
             act, sold = trimmed(d["active"]), trimmed(d["sold"])
+            # Su MARKET_SCALE_UNIFIED abu stulpeliai – verte (prasoma x prielaida).
+            sold_value = (median(sold) * (self.sale_factor() if c["MARKET_SCALE_UNIFIED"] else 1)
+                          if sold else None)
             out.append((model, percentile(act, c["MARKET_PERCENTILE"]) * self.sale_factor() if act else None,
-                        len(act), median(sold) if sold else None, len(sold)))
+                        len(act), sold_value, len(sold)))
         return out
 
     # --- valymas --------------------------------------------------------------
@@ -390,24 +624,3 @@ class Market:
             keep = dict(ranked[: c["PRICE_HISTORY_MAX_ITEMS"]])
         self.items = keep
 
-
-def migrate_old_prices(old):
-    """Senas prices.json formatas {"13|128 GB": {id: [kaina, diena]}} -> Market."""
-    m = Market()
-    for key, entries in (old or {}).items():
-        if not isinstance(entries, dict) or "|" not in key:
-            continue
-        model, storage = key.split("|", 1)
-        for iid, v in entries.items():
-            try:
-                price, day = float(v[0]), int(v[1])
-            except (TypeError, ValueError, IndexError):
-                continue
-            iid = with_source(str(iid))
-            e = m.items.get(iid)
-            if e is None:
-                m.items[iid] = {"m": model, "s": "" if storage == "*" else storage, "p": price,
-                                "f": day, "l": day, "c": day, "st": "active"}
-            elif storage != "*":
-                e["s"] = storage
-    return m

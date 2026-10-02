@@ -29,6 +29,10 @@ class Listing:
     # Kiek is tikruju sumoketum: kaina + saltinio pirkejo apsaugos mokestis.
     # Vinted ji pateikia tiesiogiai, tad spelioti nebereikia.
     total_price: float = None
+    # True, kai pardavejo salies buvo ieskoma, bet nustatyti nepavyko (pasiekta uzklausu
+    # riba arba saltinis neatsake). Toks skelbimas neitraukiamas i rinkos kaina, kol salis
+    # nepatvirtinta – kitaip Lietuvos kaina formuotu ir Lenkijos skelbimai.
+    country_unverified: bool = False
     raw: dict = field(default_factory=dict)
 
     @property

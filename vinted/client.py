@@ -16,6 +16,7 @@ except ImportError:          # pragma: no cover
     USING_CFFI = False
 
 from . import config
+from .limiter import HostLimiter
 from .config import BASE, API_BASE
 from .util import debug
 
@@ -58,7 +59,7 @@ def looks_newest_first(batch):
 
 
 class VintedClient:
-    def __init__(self, session_factory=None, sleep=time.sleep):
+    def __init__(self, session_factory=None, sleep=time.sleep, limiter=None):
         self._factory = session_factory or self._default_session
         self.sleep = sleep
         self.session = None
@@ -70,6 +71,33 @@ class VintedClient:
         self._printed_first_item = False
         self.blocked_queries = 0        # kiek paieskų is eiles Vinted atmete (403)
         self.filters_off = False        # True, kai kategoriju filtras neveikia (grazina 0 skelbimu)
+        # Uzklausu greitis ir 429 atvesinimas – VIENAM serveriui, visoms uzklausu rusims
+        # (katalogas, skelbimu puslapiai, pardaveju profiliai dalijasi ta pacia riba).
+        self.limiter = limiter if limiter is not None else HostLimiter(sleep=self.sleep)
+
+    @property
+    def users_blocked(self):
+        """Netuscia, KOL galioja 429 atvesinimas.
+
+        Anksciau tai buvo paprastas jungiklis visam paleidimui, ir to uztekdavo, kol
+        gamintojas buvo vienas. Su keliais (BRANDS) vienas 429 palikdavo be salies
+        patikros VISUS likusius – i Telegram krisdavo tik pirmojo gamintojo telefonai.
+        Riba yra laikina (matuota: ~55 uzklausos per minute i www.vinted.lt), tad
+        palaukus ji atsileidzia ir kiti gamintojai spėja savo dali."""
+        return self.limiter.blocked
+
+    def cooldown_left(self):
+        """Kiek sekundziu dar liko iki 429 atvesinimo pabaigos (0 – galima klausti)."""
+        return self.limiter.cooldown_left()
+
+    def note_rate_limit(self, response=None):
+        """429: pazymim, kiek laiko nebeklausti. Gerbiam Retry-After, jei ji atsiuncia."""
+        self.limiter.note_rate_limit(response)
+        debug(f"Vinted riba: {self.limiter.blocked}")
+
+    def take(self, kind):
+        """Leidimas vienai uzklausai (greicio riba + atvesinimas). False = neklausti."""
+        return self.limiter.take(kind)
 
     # --- sesija ---------------------------------------------------------
     @staticmethod
@@ -111,6 +139,10 @@ class VintedClient:
     def _start_once(self):
         self.session = self._factory()
         self.last_error = ""
+        # Ir pagrindinis puslapis valgo ta pacia riba, tad ji skaiciuojam. Atsakymo
+        # nelaukiam: sesija reikalinga visada (be jos nei viena uzklausa neveiks),
+        # o ji yra viena uzklausa per paleidima.
+        self.take("sesija")
         try:
             r = self.session.get(BASE + "/", headers=self.headers(json_api=False), timeout=20)
             print(f"Sesija pradeta (statusas {r.status_code})")
@@ -135,6 +167,11 @@ class VintedClient:
         params.update(self.filter_params())
         short = url.split("//", 1)[-1]
         for attempt in range(1, max_retries + 1):
+            if not self.take("katalogas"):
+                # Galioja 429 atvesinimas. Anksciau katalogas belsdavosi toliau: uzklausos
+                # bergretes (vel 429), o kiekviena ju dar ir prailgindavo ta pati atvesinima.
+                self.last_error = f"HTTP 429 ({short}): {self.limiter.blocked}"
+                return None
             try:
                 resp = self.session.get(url, params=params, headers=self.headers(), timeout=20)
                 code = resp.status_code
@@ -144,6 +181,8 @@ class VintedClient:
                     self.last_error = f"HTTP {code} ({short}): {short_body(resp.text)}"
                     backoff = config.cfg["BLOCK_BACKOFF_SECONDS"]
                     pause = backoff[min(attempt - 1, len(backoff) - 1)]
+                    if attempt == max_retries:
+                        break                       # paskutinis bandymas – laukti nebera prasmes
                     print(f"  ! {code} – Vinted blokuoja, laukiu {pause}s "
                           f"(bandymas {attempt}/{max_retries})...")
                     self.sleep(pause)
@@ -151,13 +190,17 @@ class VintedClient:
                         self.start(attempts=1)      # paskutinis bandymas – dar ir nauja sesija
                     continue
                 if code == 429:
+                    # Riba bendra visam serveriui, tad zymim ja ir cia: anksciau katalogo 429
+                    # neuzsirasydavo, ir pardaveju patikra su skelbimu puslapiais tuo paciu
+                    # metu toliau klause taip, lyg ribos nebutu.
+                    left = self.limiter.note_rate_limit(resp)
                     self.last_error = f"HTTP 429 ({short}): per daug uzklausu"
-                    print(f"  ! 429 per daug uzklausu – laukiu {wait * attempt * 2}s...")
-                    self.sleep(wait * attempt * 2)
-                    continue
+                    print(f"  ! 429 per daug uzklausu – atvesinimas {left:.0f}s")
+                    return None
                 if code >= 500:
                     self.last_error = f"HTTP {code} ({short}): serverio klaida"
-                    self.sleep(wait * attempt)
+                    if attempt < max_retries:
+                        self.sleep(wait * attempt)
                     continue
                 if code == 400 and page > 1:
                     # Vinted leidzia ne daugiau ~10 puslapiu (960 skelb.). Toliau – 400
@@ -181,7 +224,8 @@ class VintedClient:
             except Exception as e:
                 self.last_error = f"Tinklo/JSON klaida ({short}): {e}"
                 print(f"  ! {self.last_error} (bandymas {attempt}/{max_retries})")
-                self.sleep(wait * attempt)
+                if attempt < max_retries:
+                    self.sleep(wait * attempt)
         return None
 
     def filter_params(self):
@@ -251,8 +295,14 @@ class VintedClient:
     def fetch_item_page(self, url, max_bytes=3_000_000):
         """Grazina (http_statusas, html, galutinis_url). Klaidos atveju (0, "", url)."""
         full = BASE + url if url.startswith("/") else url
+        if not self.take("skelbimas"):
+            return 0, "", full          # atvesinimas – skelbima atidarysim kitame paleidime
         try:
             r = self.session.get(full, headers=self.headers(json_api=False), timeout=20)
+            if r.status_code == 429:
+                # Ta pati www.vinted.lt riba kaip ir pardaveju uzklausoms – skaiciuojam kartu,
+                # kitaip skelbimu puslapiai ja isnaudotu, o salies patikra liktu be nieko.
+                self.note_rate_limit(r)
             return r.status_code, (r.text or "")[:max_bytes], str(getattr(r, "url", full) or full)
         except Exception as e:
             debug(f"skelbimo puslapio klaida: {e}")
@@ -260,13 +310,24 @@ class VintedClient:
 
     # --- pardavejas -----------------------------------------------------
     def fetch_user(self, user_id):
-        """Pardavejo profilis per Vinted API (gali buti blokuojamas – tada {})."""
+        """Pardavejo profilis per Vinted API (gali buti blokuojamas – tada {}).
+
+        Butent is cia paaiskeja pardavejo salis: katalogas jos nebeduoda (2026-09 grazina
+        tik `business`, `id`, `login`). Du dalykai, isaiskinti gyvai:
+        - www.vinted.lt riboja uzklausu DAZNI (matuota: ~55 per minute; virsijus – HTTP 429).
+          Riba laikina, tad pazymim atvesinima (`note_rate_limit`) ir po jo klausiam toliau –
+          kitaip vienas 429 paliktu be salies patikros visus likusius gamintojus;
+        - api.vinted.lt sio adreso NETURI (visada 404), tad ten kreipiamasi tik jei pirmasis
+          atsake kazka kita nei 404/429 – kitaip kiekvienas pardavejas kainuotu dvi uzklausas."""
         if not user_id:
             return {}
         if user_id in self._user_cache:
             return self._user_cache[user_id]
-        user = {}
+        user, limited = {}, False
         for base in (BASE, API_BASE):
+            if not self.take("pardavejas"):
+                limited = True
+                break
             try:
                 r = self.session.get(f"{base}/api/v2/users/{user_id}", headers=self.headers(), timeout=20)
                 if r.status_code == 200:
@@ -274,9 +335,20 @@ class VintedClient:
                     if isinstance(data, dict) and isinstance(data.get("user"), dict):
                         user = data["user"]
                         break
-                else:
-                    debug(f"vartotojo {user_id} API ({base}): HTTP {r.status_code}")
+                if r.status_code == 429:
+                    self.note_rate_limit(r)
+                    limited = True
+                    break
+                if r.status_code == 404:
+                    debug(f"vartotojo {user_id} nera ({base}: HTTP 404)")
+                    break
+                debug(f"vartotojo {user_id} API ({base}): HTTP {r.status_code}")
             except Exception as e:
                 debug(f"vartotojo {user_id} API klaida: {e}")
+        if limited and not user:
+            # Salies nezinom tik del MUSU ribos. Nekesuojam: pasibaigus atvesinimui si
+            # pardaveja dar galima uzklausti (anksciau tuscias atsakymas issilaikydavo
+            # visa paleidima, tad skelbimas be reikalo likdavo „be salies“).
+            return {}
         self._user_cache[user_id] = user
         return user

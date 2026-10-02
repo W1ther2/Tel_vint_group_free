@@ -18,7 +18,10 @@ RISK_PATTERNS = [
     (r"be doku\w*|be ceki\w*|rast\w* telefon\w*|nezinau slaptazodz\w*|pamirst\w* slaptazodz\w*",
      "gali būti vogtas / be dokumentų", 2),
     (r"skubiai|skubus|urgent|greitai parduod\w*|isvykst\w*|emigruoj\w*", "skubus pardavimas", 1),
-    (r"kopij\w*|replika|replica|clone|klonas|\bcopy\b|ne originalus telefonas", "gali būti kopija", 2),
+    # „ne kopija“, „čekio kopija“ – ne kopijos pozymis
+    (r"(?<!\bne )(?<!cekio )(?<!saskaitos )(?<!pirkimo )(?<!dokumentu )(?<!garantinio )"
+     r"(?:kopij\w*|replik\w*|replica|clone|klonas)|\bcopy\b(?! of (?:the )?(?:receipt|invoice))|"
+     r"ne originalus telefonas", "gali būti kopija", 2),
 ]
 _RISK_RE = [(re.compile(r"\b(?:" + p + r")"), label, pts) for p, label, pts in RISK_PATTERNS]
 _PHONE_RE = re.compile(r"(?:\+\s?370|\b8)[\s-]?\(?6\d{2}\)?[\s-]?\d{2}[\s-]?\d{3}\b|\+\d{2,3}[\s-]?\d{3}[\s-]?\d{3}[\s-]?\d{2,4}\b")

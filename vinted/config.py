@@ -6,13 +6,22 @@ import os
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 CHAT_ID = os.environ.get("CHAT_ID", "")
+# Grupes skiltis (forum topic). Tuscia = rasoma i bendra srauta. Reikalinga, kai tame
+# paciame pokalbyje nori kelis botus: pvz. iPhone – vienoje skiltyje, Android – kitoje.
+# ID paimsi paspaudes ant skilties -> „Copy link“: .../c/123456/<SKILTIES_ID>
+CHAT_TOPIC_ID = os.environ.get("CHAT_TOPIC_ID", "")
+# Kur siusti tarnybines zinutes: „SKRIPTAS UZLUZO“, „saltinis nepasiekiamas“, heartbeat,
+# sugadintas config.json. Viesoje grupeje tokioms zinutems ne vieta – nurodyk savo
+# asmeninio pokalbio su botu ID. Tuscia = kaip ir anksciau, i ta pacia grupe.
+ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "")
 
 # Failu vardus galima pakeisti aplinkos kintamaisiais – taip tas pats kodas gali
 # suktis ir "gyvai", ir testams (su kitu botu ir atskira busena).
 CONFIG_FILE = os.environ.get("CONFIG_FILE", "config.json")
 SEEN_FILE = os.environ.get("SEEN_FILE", "seen.json")
 STATE_FILE = os.environ.get("STATE_FILE", "state.json")
-OLD_PRICES_FILE = "prices.json"    # senas formatas – automatiskai perkeliamas i state.json
+# Ilgalaikis rinkos archyvas (vinted/archive.py) – saugomas kartu su busena, bet nevalomas.
+ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "archive")
 
 BASE = "https://www.vinted.lt"
 API_BASE = "https://api.vinted.lt"
@@ -29,8 +38,13 @@ DEFAULTS = {
     # Tai maziausiai 30 kartu maziau uzklausu ir tiek pat kartu greiciau.
     # false = ieskoti kiekvieno modelio atskirai pagal SEARCH_QUERIES.
     "VINTED_BROWSE_ALL": True,
-    "VINTED_QUERIES": ["iphone"],
-    "VINTED_BROWSE_PAGES": 3,        # po 96 skelb. = ~290 naujausiu, iprastam paleidimui
+    # Tuscias = paieskos frazes imamos is BRANDS ("iphone", "samsung galaxy", "xiaomi"...).
+    "VINTED_QUERIES": [],
+    # Po 96 skelb. Gyvai matyta, kad „iphone“ sarase Lietuvos skelbimu tik ~11 % (likusieji –
+    # PL, FI, LV), tad 3 puslapiai duoda vos ~30 lietuvisku. Kad „pigiausiu“ palyginimui
+    # (RANK_RECENT_DAYS) uztektu tokiu pat telefonu, imam giliau – puslapiai pigus, o jau
+    # matyti skelbimai pardavejo uzklausu nebereikalauja.
+    "VINTED_BROWSE_PAGES": 6,
     "VINTED_FULL_SCAN_PAGES": 10,    # pirmam paleidimui (seen.json tuscias)
     "VINTED_MAX_PAGES": 10,          # Vinted giliau neleidzia: 11-as puslapis = HTTP 400
 
@@ -42,12 +56,23 @@ DEFAULTS = {
     # naudojam ta, kuris praeina. Pvz. "chrome131".
     "SKELBIU_IMPERSONATE": "",
     # Pirkpard: JSON API, aprasymas ateina kartu su sarasu, tad uzteks vienos uzklausos.
-    "PIRKPARD_QUERIES": ["iphone"],
+    "PIRKPARD_QUERIES": [],           # tuscias = is BRANDS
     "PIRKPARD_PER_PAGE": 100,
     "PIRKPARD_SKIP_AUCTIONS": True,   # aukcione kaina reiskia dabartini pasiulyma, ne kaina
     "PIRKPARD_STATUS_PAGES": 3,       # kiek puslapiu perziureti tikrinant, kas parduota
 
     # --- Ka ieskoti ---
+    # Gamintojai. Galimi: "apple", "samsung", "xiaomi", "google", "oneplus".
+    # Tuscias sarasas = visi. Kiekvienas gamintojas = viena papildoma paieska per paleidima,
+    # tad ir daugiau nauju skelbimu, kuriems reikia pardavejo salies uzklausos
+    # (SELLER_COUNTRY_LOOKUPS riba – 40). Nori tik telefonu, kuriuos perparduosi –
+    # susiaurink "MODELS" arba palik maziau gamintoju.
+    "BRANDS": ["apple", "samsung", "xiaomi", "google", "oneplus"],
+    # Apie kuriuos modelius siusti. Tuscias sarasas = visi. Keiciama ir Telegram'e: /modeliai.
+    # Pvz. ["13", "13 Pro", "14 Pro Max"]. Nesekami modeliai atmetami dar pries skelbimo
+    # puslapi ir pries pardavejo salies uzklausa – tad ribotos uzklausos atitenka tiems,
+    # kurie tau rupi.
+    "MODELS": [],
     "SEARCH_QUERIES": [
         "iPhone 8", "iPhone 8 Plus", "iPhone X", "iPhone XR", "iPhone XS", "iPhone XS Max",
         "iPhone 11", "iPhone 11 Pro", "iPhone 11 Pro Max", "iPhone 12", "iPhone 12 mini",
@@ -70,6 +95,11 @@ DEFAULTS = {
     # jau parduoti – su jais lyginti butu tas pats, kas lyginti su nebeegzistuojanciais.
     "RANK_RECENT_DAYS": 2,
     "MIN_DISCOUNT": 0.10,            # bent 10% pigiau nei telefono verte
+    # „Per pigu“ – keturios ribos, kiekviena savo vietoje:
+    #   HARD_MIN_PRICE_RATIO    – x rinkos kainos: ATMETAMA pries atidarant skelbima (dalys, dezute)
+    #   SUSPICIOUS_REJECT_RATIO – x KITO pigiausio tokio pat skelbimo: ATMETAMA („rank“ rezime)
+    #   SUSPICIOUS_WARN_RATIO   – x kito pigiausio: siunciama su ⚠️ „Įtartinai pigu“
+    #   SUSPICIOUS_PRICE_RATIO  – x rinkos kainos: siunciama, bet rizikos eiluteje prirasoma priezastis
     "HARD_MIN_PRICE_RATIO": 0.40,    # pigiau nei 40% rinkos – beveik visada sugedes/dalims/ne telefonas, atmetama
     "SUSPICIOUS_PRICE_RATIO": 0.55,  # pigiau nei 55% rinkos – siunciama, bet pazymima rizika
     # Baterija: nurodyta ir per maza -> atmetama; nenurodyta -> praleidziama su zyma kortelėje.
@@ -87,19 +117,35 @@ DEFAULTS = {
     "USE_SOLD_PRICES": True,         # naudoti tikras pardavimo kainas, kai ju pakanka
     "MIN_SOLD_SAMPLES": 5,           # kiek parduotu reikia, kad kaina butu skaiciuojama is ju
     "SOLD_CHECKS_PER_RUN": 15,       # kiek senu skelbimu per paleidima patikrinti, ar parduoti
-    "SOLD_CHECK_AFTER_DAYS": 2,      # tikrinti skelbimus, kuriu kataloge nematem bent tiek dienu
+    # Tikrinti skelbimus, kuriu kataloge nematem bent tiek dienu (maziausiai 1: ta pacia diena
+    # dingimas nieko nereiskia). Anksciau 2 – tada Vinted puslapio dazniausiai jau nebudavo, ir
+    # „parduota“ patvirtinti nepavykdavo (is 717 tik 4). Zr. market.sold_check_candidates.
+    "SOLD_CHECK_AFTER_DAYS": 1,
     "MIN_SAMPLES": 8,                # kiek prasomu kainu reikia rinkos kainai
     "USE_TYPICAL_FALLBACK": True,    # kai duomenu per mazai – naudoti apytiksle kaina (retiems modeliams)
     "MARKET_PERCENTILE": 0.4,        # prasomu kainu percentilis (0.5 = mediana, 0.35 = pigesnis trecdalis)
     "ASKING_MAX_AGE_DAYS": 21,       # skelbimai, kabantys ilgiau – per brangus, i rinkos kaina neiskaiciuojami
-    "ASKING_SALE_FACTOR": 0.85,      # prasoma kaina -> reali pardavimo kaina (Vinted deramasi / kabo)
+    # Prasoma kaina -> sandorio kaina. NEPATIKRINTA PRIELAIDA: Vinted sandorio kainos nerodo,
+    # o uzsidariusio skelbimo kaina – tik jos virsutine riba. Visos vertes = prasoma x sis
+    # daugiklis (v49: ir is pardavimu, ir is skelbimu – vienu masteliu, zr. market.Quote).
+    "ASKING_SALE_FACTOR": 0.85,
+    # v49: ar ir is pardavimu („parduoti“) gauta verte dauginti is ASKING_SALE_FACTOR, kaip
+    # ir is skelbimu. Teisinga (uzsidarymo kaina – prasoma, ne sandorio), bet GYVAI kol kas
+    # isjungta: tai sumazintu iPhone verte ~15 %, ir pelno riba (MIN_PROFIT_EUR) butu atmetusi
+    # ~140 is 152 ankstesniu pranesimu – o 0,85 yra nepatikrinta prielaida. Ijungti, kai
+    # archyvas ir pardavimo faktas parodys, kiek ji teisinga. Matavimas ir mokymas jau dabar
+    # naudoja vienodą prasomu masteli (Quote.ask, `qa`) nepriklausomai nuo sio jungiklio.
+    "MARKET_SCALE_UNIFIED": False,
 
     # --- Savikalibracija ---
     # Kodas isimena, kiek spejo uz kiekviena telefona, ir kai tas telefonas parduodamas,
     # palygina su realia kaina. Sistemine paklaida automatiskai istaisoma.
-    "AUTO_CALIBRATE": True,
+    # Isjungta (v49). Kalibracija „taiso“ ASKING_SALE_FACTOR pagal uzsidariusiu skelbimu
+    # PASKUTINES PRASOMAS kainas – bet jos sandorio kainos nematuoja (Vinted jos nerodo), tad
+    # prielaida butu „kalibruojama“ is duomenu, kurie jos neliecia. /kalibruoti taip – ijungti.
+    "AUTO_CALIBRATE": False,
     "MIN_CALIBRATION_SAMPLES": 20,   # kiek parduotu reikia, kad pataisymas butu daromas
-    "CALIBRATION_MAX_STEP": 0.05,    # daugiausiai 5% pokytis per paleidima (be soliu)
+    "CALIBRATION_MAX_STEP": 0.05,    # daugiausiai 5% pokytis per diena (be soliu)
     "CALIBRATION_MIN": 0.70,         # ribos, kad klaidingi duomenys nenuvestu i absurda
     "CALIBRATION_MAX": 1.15,
 
@@ -114,12 +160,32 @@ DEFAULTS = {
 
     # --- Pelnas perpardavus ---
     "SHOW_PROFIT": True,
+    "MIN_PROFIT_EUR": 15,            # nesiusti, jei galimas pelnas mazesnis (0 = nesvarbu)
+    # Kai skelbimas gerokai pigesnis uz KITA pigiausia – beveik visada kazkas negerai
+    # (uzrakintas, be dalies, apgavyste). Santykis su kitu pigiausiu tokiu pat telefonu:
+    "SUSPICIOUS_REJECT_RATIO": 0.60, # pigiau nei 60% kito pigiausio – atmesti
+    "SUSPICIOUS_WARN_RATIO": 0.75,   # pigiau nei 75% – siusti, bet pazymeti ⚠️
     "SHOW_RANK": False,              # rodyti kortelej „12-as pigiausias iš 64 ...“ (atrankai naudojama visada)
+
+    # --- Rezultatu sekimas: ar praneseti skelbimai buvo nupirkti ir per kiek laiko ---
+    "TRACK_RESULTS": True,
+    "TRACK_DAYS": 7,                 # kiek dienu sekti kiekviena pranesima
+    "TRACK_FAST_HOURS": 48,          # pirmas 48 val. – tikrinti kas paleidima
+    "TRACK_MIN_MINUTES": 5,          # bet ne dazniau nei kas 5 min.
+    "TRACK_SLOW_EVERY_HOURS": 6,     # veliau – kas 6 val.
+    "TRACK_CHECKS_PER_RUN": 25,      # daugiausia patikrinimu per paleidima
+    "TRACK_KEEP_DAYS": 90,           # kiek laiko laikyti rezultatus
+    "REPORT_EVERY_DAYS": 7,          # automatine ataskaita Telegram'e (0 = nesiusti)
     "BUYER_FEE_FIXED": 0.70,         # Vinted pirkejo apsaugos mokestis (fiksuota dalis)
     "BUYER_FEE_PCT": 0.05,           # Vinted pirkejo apsaugos mokestis (procentai)
     "SHIPPING_COST": 3.5,            # siuntimo kaina perkant
 
     # --- Pranesimai ---
+    # Daugiausiai korteliu per viena paleidima (0 = be ribos). Apsauga nuo lavinos:
+    # jei seen.json / state.json kada nors pasimestu, visi skelbimai atrodytu nauji ir
+    # Telegram'as gautu desimtis korteliu is karto (o Telegram grupeje leidzia 20/min.).
+    # Likusieji nezymimi matytais – juos ivertins kitas paleidimas.
+    "MAX_ALERTS_PER_RUN": 20,
     "LOUD_DISCOUNT": 0.30,           # nuo tiek pigiau – su garsu, maziau – tyliai
     "TELEGRAM_COMMANDS": True,       # leisti keisti nustatymus komandomis Telegram'e
     # Kas gali keisti nustatymus. Tuscia = niekas (komandos grupeje ignoruojamos).
@@ -140,6 +206,22 @@ DEFAULTS = {
     "ALLOWED_COUNTRY_CODES": ["LT"],
     "FILTER_BY_COUNTRY": True,
     "REQUIRE_KNOWN_COUNTRY": False,
+    # Kiek pardavejo salies uzklausu per viena paieska. Vinted katalogas salies nebeduoda,
+    # o zinoti ja BUTINA pries rinkos statistika (uzsienio kainos iskreipia Lietuvos rinka).
+    # Tikrinami tik nauji telefonai, atsakymai isimenami (state.json "sellers"), tad
+    # praktikoje uzklausu maziau nei nauju skelbimu. 0 = neuzklausti.
+    # Riba yra VISO PALEIDIMO (dalijama visoms paieskoms po lygiai), o ne vienos paieskos –
+    # kitaip pirmasis gamintojas suvalgo viska ir i Telegram krenta tik jo telefonai.
+    # Nuo v46 sios ribos paskirtis pasikeite: 429 nebevengiam ja (tuo rupinasi
+    # VINTED_MAX_PER_MINUTE), tad cia ribojamas PALEIDIMO LAIKAS. Kiekviena uzklausa kainuoja
+    # DETAIL_SLEEP_SECONDS + sulaikyma, tad 30 uzklausu ~ pusе minutes is MAX_RUN_MINUTES.
+    # Ta pacia pardaveju API kvieciа ir skelbimo atidarymas (reitingui, atsiliepimams);
+    # i SIA riba tos uzklausos neisiskaiciuoja, bet i greicio riba – jau taip.
+    "SELLER_COUNTRY_LOOKUPS": 30,
+    # Kai salies nustatyti nepavyko: praleisti tik tada, jei tekste yra tikrai lietuvisku
+    # zodziu. „iPhone 12 64g“ be lietuvisko zodzio daznai yra lenku skelbimas, kurio
+    # kalbos filtras nepagauna.
+    "UNKNOWN_COUNTRY_NEEDS_LT_TEXT": True,
     "MIN_SELLER_RATING": 0,
     "MIN_SELLER_REVIEWS": 0,
     "SELLER_NEW_ACCOUNT_DAYS": 30,   # jaunesne paskyra = rizikos pozymis
@@ -159,9 +241,50 @@ DEFAULTS = {
     "BLOCK_BACKOFF_SECONDS": [30, 60, 120],   # pauzes, kai Vinted blokuoja (403)
     "STOP_AFTER_BLOCKED_QUERIES": 3,          # po tiek is eiles blokuotu paiesku – baigti paleidima
     "DETAIL_SLEEP_SECONDS": 1.0,
+    # Kiek laukti po HTTP 429 (www.vinted.lt riboja uzklausu dazni – matuota ~55 per minute).
+    # Riba laikina, tad po sios pauzes klausiam toliau; kitaip vienas 429 paliktu be salies
+    # patikros visus likusius gamintojus, ir i Telegram kristu tik pirmojo telefonai.
+    "VINTED_RATE_COOLDOWN": 60,
+    # Daugiausiai uzklausu i www.vinted.lt per minute – VISU rusiu kartu (katalogo puslapiai,
+    # skelbimu puslapiai, pardaveju profiliai). Gyvai matuota riba ~55/min, tad 45 palieka
+    # atsargos ir bendram runner'io IP. Virsijus – uzklausa sulaikoma, kol atsiras vieta.
+    # Taip pigiau: sulaikymas kainuoja ~1 s, o 429 kainuoja visa VINTED_RATE_COOLDOWN
+    # minute tylos. 0 = greicio neriboti (kaip iki v46).
+    # Tai yra LUBOS: su VINTED_RATE_ADAPT botas mokosi tik zemiau ju.
+    "VINTED_MAX_PER_MINUTE": 45,
+    # Mokytis tikrosios ribos pagal 429 (AIMD). 45/min yra spejimas vienam runner'iui, bet
+    # GitHub Actions IP yra bendri: kai juo tuo paciu metu dirba kitas darbas, tikroji riba
+    # zemesne. Po paleidimo su 429 greitis mazinamas karta (x0,7), po tyliu – po truputi
+    # grazinamas (+3/min), kol vel pasiekia VINTED_MAX_PER_MINUTE. Issimoktas skaicius
+    # saugomas state.json ("rate_limit"). false = visada laikyti VINTED_MAX_PER_MINUTE.
+    "VINTED_RATE_ADAPT": True,
+    # Zemiausias greitis, iki kurio dar mazinam (zemiau – paleidimas nebespetu nieko).
+    "VINTED_RATE_MIN": 15,
+    # Kiek valandu atsiminti greiti, kuriam serveris atsake 429. Tiek laiko grizdami
+    # aukstyn sustojam 3/min zemiau jo – kitaip kas kelis paleidimus vel atsitrenktume i ta
+    # pacia siena, o toks paleidimas praranda didele dali skelbimu puslapiu (pjuklas).
+    "VINTED_RATE_MEMORY_HOURS": 6,
+    # Kai skelbimo puslapio atidaryti nepavyksta (403, laiko limitas), skelbimas nesiunciamas
+    # „aklai“ – bandoma dar kituose paleidimuose, bet ne daugiau nei tiek kartu.
+    "DETAIL_RETRIES": 3,
     "DRY_RUN": False,
     "PAUSED": False,                 # True = skelbimai nesiunciami (Telegram /pauze)
     "DEBUG": False,
+    # Rinkos kainos patikimumas (vinted/confidence.py). Griezta atranka TIK nuolaidos budu:
+    # nuolaida skaiciuojama nuo ATSARGIOS vertes = verte x p20(pardavimo / musu kaina) to
+    # lygio. „Pigiausiu“ (rank) logika nekeiciama.
+    "CONFIDENCE_STRICT": True,
+    # Kiek PATVIRTINTU pardavimu su tuometiniu lygiu (qc) reikia, kad lygio reiksme butu
+    # ismokta, o ne pradine (confidence.PRIOR).
+    "CONFIDENCE_MIN_SAMPLES": 20,
+    # Pardavimo faktas (vinted/liquidity.py): kiek dienu nuo pirmo pamatymo laukti, ar
+    # skelbimas patvirtintai parduodamas; kiek pavyzdziu grupei, kad rodiklis butu patikimas.
+    # Kol kas tik matuojama – sprendimams nenaudojama.
+    "SALE_FACT_DAYS": 7,
+    "SALE_FACT_MIN_SAMPLES": 30,
+    # Rasyti ilgalaiki rinkos archyva (archive/market-YYYY-MM.jsonl.gz). Is jo tikrinama, ar
+    # rinkos kaina ir jos patikimumas pasiteisina: `python -m vinted.dataset`.
+    "ARCHIVE_ENABLED": True,
     "SEEN_MAX_AGE_DAYS": 7,
     "SEEN_MAX_ENTRIES": 20000,
 }
@@ -201,8 +324,9 @@ def load(path=CONFIG_FILE):
 
 
 # Raktai, kuriuos galima keisti Telegram komandomis
-OVERRIDABLE = {"MIN_DISCOUNT", "MIN_BATTERY", "LOUD_DISCOUNT", "MARKET_PRICES", "PAUSED", "TIDY_ONLY",
-               "MARKET_PERCENTILE", "SHOW_PROFIT", "AUTO_CALIBRATE", "DEAL_MODE", "RANK_TOP_PCT"}
+OVERRIDABLE = {"MIN_PROFIT_EUR", "MIN_DISCOUNT", "MIN_BATTERY", "LOUD_DISCOUNT", "MARKET_PRICES", "PAUSED", "TIDY_ONLY",
+               "MARKET_PERCENTILE", "SHOW_PROFIT", "AUTO_CALIBRATE", "DEAL_MODE", "RANK_TOP_PCT", "MODELS",
+               "MAX_ALERTS_PER_RUN"}
 
 
 def apply_overrides(overrides):
@@ -235,3 +359,10 @@ def market_prices():
 
 def allowed_languages():
     return {str(x).upper() for x in cfg["ALLOWED_LANGUAGES"]} | {"LT"}
+
+
+def brand_queries(configured):
+    """Paieskos frazes: kas nurodyta rankomis, o jei tuscia – pagal ijungtus gamintojus."""
+    from .catalog import enabled, queries
+    manual = [str(q) for q in (configured or []) if str(q).strip()]
+    return manual or queries(enabled(cfg.get("BRANDS")))

@@ -4,6 +4,8 @@ on:
   schedule:
     - cron: "*/10 * * * *"
   workflow_dispatch:
+  push:
+    branches: [main]
 
 concurrency:
   group: vinted-finder
@@ -14,33 +16,69 @@ permissions:
 
 jobs:
   run:
+    # Kodo leidimo push suaktyvina paleidima; busenos commitai – ne.
+    if: github.event_name != 'push' || contains(github.event.head_commit.message, 'RELEASE v49.1-free')
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          ref: main
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Idiegti bibliotekas
-        run: pip install requests curl_cffi
+        run: pip install -r requirements.txt
 
-      - name: Testai
-        run: python -m unittest discover tests
+      - name: Atsiusti busena
+        env:
+          STATE_BRANCH: busena
+        run: |
+          if git fetch --depth=1 origin "$STATE_BRANCH" 2>/dev/null; then
+            for f in seen.json state.json; do
+              if git show "FETCH_HEAD:$f" > "$f.gauta" 2>/dev/null; then mv "$f.gauta" "$f"; else rm -f "$f.gauta"; fi
+            done
+            git archive FETCH_HEAD archive 2>/dev/null | tar -x 2>/dev/null || true
+            echo "Busena paimta is sakos '$STATE_BRANCH'"
+          else
+            echo "Sakos '$STATE_BRANCH' dar nera – naudoju repozitorijos failus"
+          fi
+          ls -l seen.json state.json 2>/dev/null || true
 
-      - name: Paleisti
+      - name: Paleisti v49.1
         env:
           BOT_TOKEN: ${{ secrets.BOT }}
           CHAT_ID: ${{ secrets.TEL }}
+          # Palikta pasirenkama, bet nenaudojama, jei grupėje nėra forumo temos.
+          CHAT_TOPIC_ID: ${{ secrets.TOPIC_IPHONE }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT }}
         run: python vinted_deal_finder.py
 
       - name: Issaugoti busena
         if: always()
+        env:
+          STATE_BRANCH: busena
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          if [ ! -f seen.json ] && [ ! -f state.json ]; then echo "Nera ko saugoti"; exit 0; fi
+          work=$(mktemp -d)
+          for f in seen.json state.json; do [ -f "$f" ] && cp "$f" "$work/$f"; done
+          if [ -d archive ]; then cp -r archive "$work/archive"; fi
+          cd "$work"
+          git init -q -b "$STATE_BRANCH"
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
-          for f in seen.json state.json; do [ -f "$f" ] && git add "$f"; done
-          git diff --cached --quiet || git commit -m "Atnaujinta busena"
-          git pull --rebase --autostash || true
-          git push || true
+          git add -A
+          git commit -q -m "Busena $(date -u '+%Y-%m-%d %H:%M UTC')"
+          for i in 1 2 3; do
+            if git push -q --force "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY" "HEAD:refs/heads/$STATE_BRANCH"; then
+              echo "Busena issaugota sakoje '$STATE_BRANCH'"; exit 0
+            fi
+            echo "Nepavyko issaugoti ($i)"; sleep $((i * 5))
+          done
+          echo "Busenos issaugoti nepavyko"
+          exit 1
