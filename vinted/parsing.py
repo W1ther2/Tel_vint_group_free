@@ -275,6 +275,7 @@ def seller_from_page(page):
 
 # --- Ar skelbimas parduotas ---------------------------------------------------
 _CLOSED_RE = re.compile(r'\\?"is_closed\\?"\s*:\s*(true|false)')
+_RESERVED_RE = re.compile(r'\\?"is_reserved\\?"\s*:\s*(true|false)')
 _SOLD_RES = [
     re.compile(r'\\?"item_closing_action\\?"\s*:\s*\\?"sold'),
     re.compile(r'\\?"is_sold\\?"\s*:\s*true'),
@@ -283,7 +284,7 @@ _SOLD_RES = [
 
 
 def listing_status(http_status, page, final_url, item_id):
-    """'sold' / 'gone' (istrintas) / 'active' / 'unknown'."""
+    """'sold' / 'reserved' / 'gone' (istrintas) / 'active' / 'unknown'."""
     if http_status in (404, 410):
         return "gone"
     if http_status != 200 or not page:
@@ -295,4 +296,7 @@ def listing_status(http_status, page, final_url, item_id):
         return "sold"
     if any(rx.search(page) for rx in _SOLD_RES):
         return "sold"
+    m = _RESERVED_RE.search(page)          # kaip ir "is_closed" – pirmas priklauso skelbimui
+    if m and m.group(1) == "true":
+        return "reserved"
     return "active"
