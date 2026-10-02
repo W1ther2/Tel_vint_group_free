@@ -1,0 +1,4 @@
+# Versijos ribojamos, kad nauja biblioteka netiketai nesulauzytu boto.
+# curl_cffi atnaujinti verta retkarciais (naujesni narsykliu parasai) – pakeisk ribas ir paleisk testus.
+requests>=2.32,<3
+curl_cffi>=0.16,<0.17
