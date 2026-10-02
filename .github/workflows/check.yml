@@ -4,6 +4,8 @@ on:
   schedule:
     - cron: "*/10 * * * *"
   workflow_dispatch:
+  push:
+    branches: [main]
 
 concurrency:
   group: vinted-finder
@@ -14,25 +16,31 @@ permissions:
 
 jobs:
   run:
+    # Push paleidimas skirtas tik naujos versijos release'ui.
+    # Busenos commitai neturi paleisti boto is naujo.
+    if: github.event_name != 'push' || contains(github.event.head_commit.message, 'RELEASE v49.1-free')
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          ref: main
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Idiegti bibliotekas
-        run: pip install requests curl_cffi
+        run: pip install -r requirements.txt
 
-      - name: Testai
-        run: python -m unittest discover tests
-
-      - name: Paleisti
+      - name: Paleisti v49.1
         env:
           BOT_TOKEN: ${{ secrets.BOT }}
           CHAT_ID: ${{ secrets.TEL }}
+          CHAT_TOPIC_ID: ${{ secrets.TOPIC_IPHONE }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT }}
         run: python vinted_deal_finder.py
 
       - name: Issaugoti busena
@@ -40,7 +48,9 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
-          for f in seen.json state.json; do [ -f "$f" ] && git add "$f"; done
+          [ -f seen.json ] && git add seen.json || true
+          [ -f state.json ] && git add state.json || true
+          [ -d archive ] && git add archive || true
           git diff --cached --quiet || git commit -m "Atnaujinta busena"
           git pull --rebase --autostash || true
           git push || true
