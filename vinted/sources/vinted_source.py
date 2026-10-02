@@ -16,6 +16,7 @@ SELLER_KEYS = ("country", "rating", "reviews", "sold", "account_age_days")
 class VintedSource(Source):
     name = "vinted"
     label = "Vinted"
+    country_needs_request = True     # katalogas salies nebeduoda – reikia pardavejo uzklausos
 
     def __init__(self, client=None, sleep=time.sleep):
         super().__init__()
@@ -29,9 +30,12 @@ class VintedSource(Source):
         return bool(config.cfg["VINTED_BROWSE_ALL"])
 
     def queries(self):
-        """Viena paieska "iphone" grazina visus modelius – nuo 8 iki 17 Pro Max.
-        34 atskiros paieskos duoda ta pati, tik daro 30+ kartu daugiau uzklausu."""
-        return list(config.cfg["VINTED_QUERIES"]) if self.browse_all else super().queries()
+        """Viena paieska gamintojui: „iphone“ grazina visus iPhone – nuo 8 iki 17 Pro Max,
+        „samsung galaxy“ – visus Galaxy. 34 atskiros paieskos duoda ta pati, tik daro
+        30+ kartu daugiau uzklausu."""
+        if not self.browse_all:
+            return super().queries()
+        return config.brand_queries(config.cfg["VINTED_QUERIES"])
 
     def describe(self, query):
         return f"'{query}' (visi modeliai)" if self.browse_all else f"'{query}'"
@@ -82,6 +86,37 @@ class VintedSource(Source):
             created_at=get_created_at(raw), raw=raw,
         )
 
+    @property
+    def country_cooldown_left(self):
+        """Kiek liko iki 429 atvesinimo pabaigos – kad `Run` galetu palaukti, o ne nurasyti."""
+        left = getattr(self.client, "cooldown_left", None)
+        return float(left()) if callable(left) else 0.0
+
+    @property
+    def limiter(self):
+        """Uzklausu skaitliukas ir greicio riba – bendra visoms Vinted uzklausoms."""
+        return getattr(self.client, "limiter", None)
+
+    @property
+    def rate_limited(self):
+        """Serveris siuo metu riboja uzklausas (429): nesekme laikina ir ne skelbimo kalte."""
+        return bool(getattr(self.client, "users_blocked", ""))
+
+    @property
+    def country_lookups_blocked(self):
+        """Vinted uzdare pardaveju API siame paleidime (429) – toliau klausti nera prasmes."""
+        return bool(getattr(self.client, "users_blocked", ""))
+
+    def seller_country(self, listing):
+        """Pardavejo salis. Nuo 2026-09 katalogo API pardavejo objekte grazina tik
+        `business`, `id` ir `login` – nei salies, nei miesto. Patikrinta gyvai: 45 is 45
+        skelbimu salį pasake /api/v2/users/<id>, tad ji imam is ten (vienas pardavejas =
+        viena uzklausa, atsakymai kesuojami ir paleidime, ir state.json)."""
+        country = (listing.seller or {}).get("country")
+        if country or not listing.seller_id:
+            return country
+        return seller_from_dict(self.client.fetch_user(_as_id(listing.seller_id))).get("country")
+
     def note_ids(self, listing):
         """Kategorijos / prekes zenklo ID statistika – tik tikriems telefonams."""
         raw = listing.raw
@@ -99,6 +134,10 @@ class VintedSource(Source):
         if status in ("sold", "gone"):
             return Detail(status=status)
         og = parse_og_tags(page)
+        if status == "active" and not og:
+            # 200, bet ne skelbimo puslapis (pvz. botu patikros ar klaidos puslapis):
+            # aprasymo nera, tad nieko patikrinti negalim
+            return Detail(status="unknown")
         return Detail(
             status=status, title=og.get("title") or listing.title,
             description=og.get("description") or "", photo=og.get("image"),
