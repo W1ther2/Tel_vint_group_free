@@ -153,26 +153,15 @@ class Run:
                 return self.reject("ne tarp pigiausių",
                                    f"{display(model)} {price:.0f}€ – {rank.place}-as iš {rank.n} "
                                    f"({rank.low:.0f}–{rank.high:.0f}€)")
-            # Gerokai pigesnis uz kita pigiausia tokį pat telefona – beveik visada kazkas
-            # negerai (pvz. „iPhone 14 uzbluokuotas be akumo“ uz 130 €, kai kiti nuo 200 €).
-            ratio = self.suspicious_ratio(rank, price)
-            if ratio is not None and ratio < c["SUSPICIOUS_REJECT_RATIO"]:
-                self.new_seen[uid] = time.time()
-                return self.reject_bad(uid, "itartinai", "įtartinai pigu",
-                                   f"{display(model)} {price:.0f}€ – kitas pigiausias {rank.peer_low:.0f}€ "
-                                   f"({1 - ratio:.0%} pigiau)")
+            # Labai maza kaina pati savaime nera atmetimo priezastis: tai gali buti tikras dealas.
+            # Rizika tikrinsim po aprasymo ir pardavejo duomenu patikros.
         else:
             best_case = quote.price * CONDITION_FACTOR.get(cat_condition, 1.08) * 1.03
             if price > best_case * (1 - c["MIN_DISCOUNT"]):
                 self.new_seen[uid] = time.time()
                 return self.reject("per brangu")
-        # Riba: 40% rinkos kainos arba modelio minimali kaina – kuri mazesne (kad
-        # apytiksle kaina ar mano ivertinta minimali kaina neatmestu tikru pigiu telefonu)
-        floor = min(quote.price * c["HARD_MIN_PRICE_RATIO"], min_price(model) or float("inf"))
-        if price < floor:
-            self.new_seen[uid] = time.time()
-            return self.reject("per pigu (sugedęs / dalims / ne telefonas?)",
-                               f"{title[:40]} {price:.0f}€ (riba {floor:.0f}€, rinka {quote.price:.0f}€)")
+        # Zemiau 40% rinkos esanti kaina vertinama tik po aprasymo/pardavejo patikru,
+        # kad geri, neiprasti pasiulymai nebutu ismesti vien del kainos.
         self.new_seen[uid] = time.time()
         if c["PAUSED"]:
             # Pauze tikrinam PRIES skelbimo puslapi: kainu istorija toliau kaupiasi
@@ -308,6 +297,35 @@ class Run:
 
         risk_level, risk_reasons = assess_risk(detail.title or title, description, price, quote.price,
                                                seller, listing.photo_count)
+
+        # Ypac pigi kaina yra tik patikros signalas, ne automatinis atmetimas.
+        # Atmetam tik kai kartu randamas konkretus apgavystes pozymis arba nauja/atsiliepimu
+        # neturinti paskyra su labai skurdziu skelbimu (mazai nuotrauku IR beveik tuscias aprasas).
+        peer_ratio = self.suspicious_ratio(rank, price)
+        market_ratio = price / quote.price if quote and quote.price else None
+        extreme_price = ((peer_ratio is not None and peer_ratio < c["SUSPICIOUS_REJECT_RATIO"])
+                         or (market_ratio is not None and market_ratio < c["HARD_MIN_PRICE_RATIO"]))
+        if extreme_price:
+            hard_scam_flags = {
+                "prašo rašyti ne per Vinted", "prašo susisiekti ne per Vinted",
+                "mokėjimas ne per Vinted", "aprašyme telefono nr. / el. paštas",
+                "gali būti vogtas / be dokumentų", "gali būti kopija",
+            }
+            explicit_scam = any(reason in hard_scam_flags or
+                                reason.startswith("daug neigiamų atsiliepimų")
+                                for reason in (risk_reasons or []))
+            account_age = seller.get("account_age_days")
+            reviews = seller.get("reviews")
+            weak_profile = ((account_age is not None and account_age < c["SELLER_NEW_ACCOUNT_DAYS"])
+                            or reviews == 0)
+            sparse_listing = (len(description.strip()) < 25 and
+                              (listing.photo_count is None or listing.photo_count <= 1))
+            if explicit_scam or (weak_profile and sparse_listing):
+                return self.reject_bad(
+                    uid, "itartinai", "įtartinai pigu su papildomais rizikos požymiais",
+                    f"{display(model)} {price:.0f}€; rizika: "
+                    f"{', '.join(risk_reasons or []) or 'nauja/tuščia paskyra ir skurdus skelbimas'}")
+
         profit = estimate_profit(price, value, pickup_only=PICKUP_LABEL in risk_reasons,
                                  buyer_fee=getattr(source, "buyer_protection_fee", True),
                                  total_price=listing.total_price)
