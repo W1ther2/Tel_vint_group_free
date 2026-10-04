@@ -121,6 +121,10 @@ DEFAULTS = {
     # dingimas nieko nereiskia). Anksciau 2 – tada Vinted puslapio dazniausiai jau nebudavo, ir
     # „parduota“ patvirtinti nepavykdavo (is 717 tik 4). Zr. market.sold_check_candidates.
     "SOLD_CHECK_AFTER_DAYS": 1,
+    # Pirmiau tikrinami neseniai dinge (nematyti iki tiek dienu) – ju puslapis dar rodo „parduota“.
+    "SOLD_CHECK_FRESH_DAYS": 4,
+    # Puslapis sake „vis dar parduodamas“ – is naujo tikrinti ne anksciau nei po tiek dienu.
+    "SOLD_RECHECK_ACTIVE_DAYS": 2,
     "MIN_SAMPLES": 8,                # kiek prasomu kainu reikia rinkos kainai
     "USE_TYPICAL_FALLBACK": True,    # kai duomenu per mazai – naudoti apytiksle kaina (retiems modeliams)
     "MARKET_PERCENTILE": 0.4,        # prasomu kainu percentilis (0.5 = mediana, 0.35 = pigesnis trecdalis)

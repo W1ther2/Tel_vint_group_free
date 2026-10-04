@@ -303,23 +303,40 @@ class Market:
         """Aktyvus skelbimai, kuriu kataloge nematem bent SOLD_CHECK_AFTER_DAYS ir siandien
         netikrinom.
 
-        Tvarka – del pardavimu TIESOS (v48). Is 717 „parduotu“ tik 4 Vinted tikrai parode
-        „parduota“: kiti buvo patikrinti tik po 2 dienu, kai puslapio jau nebuvo (404 =
-        „dingo“, galejo buti ir istrintas). Todel:
-        1. pirmiau tie, kuriems zinomas tuometinis patikimumo lygis (`qc`) – tik is ju
-           confidence modelis gali mokytis (zr. confidence.learn_levels);
-        2. tarp ju – ilgiausiai netikrinti (`c`);
-        3. tarp tu – neseniausiai dinge: ju puslapis greiciausiai dar rodo „parduota“.
-        Tą pačią dieną dingimas nieko nereiskia – skelbimas galejo tiesiog nepatekti i
-        perziuretus puslapius – tad tikrinama ne anksciau nei kita diena."""
+        Tvarka – del pardavimu TIESOS. Gyvai (2026-10-04) is ~2300 „parduotu“ tik 4 Vinted
+        tikrai parode „parduota“: eile eidavo nuo SENIAUSIU (5000+ nematytu 10+ d.), tad
+        skelbimas buvo tikrinamas tik po 4–15 d., kai puslapio jau nebuvo (404 = „dingo“,
+        galejo buti ir istrintas; is 121 tokio patikrinimo – 0 „parduota“). Todel:
+        1. pirmiau NESENIAI dinge (nematyti <= SOLD_CHECK_FRESH_DAYS): ju puslapis dar gali
+           rodyti „parduota“; tarp ju – su zinomu patikimumo lygiu (`qc`, is ju mokosi
+           confidence modelis), tada nesenausiai dinge;
+        2. „vis dar parduodamas“ (puslapis sake `active` – dazniausiai tiesiog nuslinko is
+           perziuretu puslapiu) is naujo – ne anksciau nei po SOLD_RECHECK_ACTIVE_DAYS;
+        3. seni (ilgai nematyti) – tik jei lieka vietos, kaip anksciau: `qc`, ilgiausiai
+           netikrinti, neseniausiai dinge.
+        Užklausu skaicius nesikeicia (SOLD_CHECKS_PER_RUN). Tą pačią dieną dingimas nieko
+        nereiskia – tad tikrinama ne anksciau nei kita diena."""
+        c = config.cfg
         day = day if day is not None else today()
-        after = max(1, int(config.cfg["SOLD_CHECK_AFTER_DAYS"]))
-        cands = [((0 if e.get("qc") else 1), e.get("c", 0), -e.get("l", 0), iid)
-                 for iid, e in self.items.items()
-                 if e.get("st") == "active" and not e.get("x")
-                 and day - e.get("l", day) >= after and e.get("c", 0) < day]
+        after = max(1, int(c["SOLD_CHECK_AFTER_DAYS"]))
+        fresh_days = max(after, int(c["SOLD_CHECK_FRESH_DAYS"]))
+        recheck = max(1, int(c["SOLD_RECHECK_ACTIVE_DAYS"]))
+        cands = []
+        for iid, e in self.items.items():
+            if e.get("st") != "active" or e.get("x"):
+                continue
+            unseen = day - e.get("l", day)
+            if unseen < after or e.get("c", 0) >= day:
+                continue
+            if "ca" in e and day - e["ca"] < recheck:
+                continue
+            no_qc = 0 if e.get("qc") else 1
+            if unseen <= fresh_days:
+                cands.append((0, no_qc, unseen, e.get("c", 0), iid))
+            else:
+                cands.append((1, no_qc, e.get("c", 0), -e.get("l", 0), iid))
         cands.sort()
-        return [c[-1] for c in cands[: config.cfg["SOLD_CHECKS_PER_RUN"]]]
+        return [x[-1] for x in cands[: c["SOLD_CHECKS_PER_RUN"]]]
 
     @locked
     def set_status(self, item_id, status, day=None):

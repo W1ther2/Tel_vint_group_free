@@ -590,7 +590,7 @@ class Run:
         if not groups:
             return
 
-        found = {"sold": 0, "gone": 0, "qc": 0}
+        found = {"sold": 0, "gone": 0, "qc": 0, "active": 0, "checked": 0}
 
         def check(source_name, items):
             source = by_name[source_name]
@@ -601,6 +601,7 @@ class Run:
                 st = self.status_of(source, uid, local_id, entry.get("u"))
                 with self.lock:
                     self.state.market.set_status(uid, st)
+                    found["checked"] += 1
                     if st in found:
                         found[st] += 1
                     if st == "sold" and entry.get("qc"):
@@ -621,8 +622,9 @@ class Run:
 
         if any(found.values()):
             extra = " (dingusius laikom parduotais)" if config.cfg["GONE_AS_SOLD"] else ""
-            print(f"Pardavimu patikra: parduota {found['sold']} (is ju su patikimumo lygiu "
-                  f"{found['qc']}), dingo {found['gone']}{extra}")
+            print(f"Pardavimu patikra: patikrinta {found['checked']} – parduota {found['sold']} "
+                  f"(is ju su patikimumo lygiu {found['qc']}), dingo {found['gone']}{extra}, "
+                  f"vis dar parduodama {found['active']}")
 
     def track_results(self):
         """Ar skelbimai, apie kuriuos pranesem, buvo nupirkti – ir per kiek laiko.
