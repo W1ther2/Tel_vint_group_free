@@ -96,14 +96,14 @@ DEFAULTS = {
     "RANK_RECENT_DAYS": 2,
     "MIN_DISCOUNT": 0.10,            # bent 10% pigiau nei telefono verte
     # „Per pigu“ – keturios ribos, kiekviena savo vietoje:
-    #   HARD_MIN_PRICE_RATIO    – x rinkos kainos: ATMETAMA pries atidarant skelbima (dalys, dezute)
-    #   SUSPICIOUS_REJECT_RATIO – x KITO pigiausio tokio pat skelbimo: ATMETAMA („rank“ rezime)
+    #   HARD_MIN_PRICE_RATIO    – labai maza kaina privercia papildomai tikrinti apgavystes pozymius
+    #   SUSPICIOUS_REJECT_RATIO – labai maza kaina pries kita pigiausia sukelia papildoma rizikos patikra
     #   SUSPICIOUS_WARN_RATIO   – x kito pigiausio: siunciama su ⚠️ „Įtartinai pigu“
     #   SUSPICIOUS_PRICE_RATIO  – x rinkos kainos: siunciama, bet rizikos eiluteje prirasoma priezastis
-    "HARD_MIN_PRICE_RATIO": 0.40,    # pigiau nei 40% rinkos – beveik visada sugedes/dalims/ne telefonas, atmetama
+    "HARD_MIN_PRICE_RATIO": 0.40,    # pigiau nei 40% rinkos – papildomos apgavystes patikros signalas
     "SUSPICIOUS_PRICE_RATIO": 0.55,  # pigiau nei 55% rinkos – siunciama, bet pazymima rizika
     # Baterija: nurodyta ir per maza -> atmetama; nenurodyta -> praleidziama su zyma kortelėje.
-    "MIN_BATTERY": 80,               # min. baterijos % (0 = netikrinti)
+    "MIN_BATTERY": 0,                # baterijos procentas rodomas, bet ribotuvas isjungtas
     "LOW_BATTERY_MIN_DISCOUNT": 0.30,  # isimtis: labai pigus telefonas praleidziamas ir su mazesne baterija
     "MODEL_MIN_PRICES": {},          # savos min. kainos modeliams, pvz. {"13": 100} (kitiems – numatytosios)
 
@@ -160,10 +160,10 @@ DEFAULTS = {
 
     # --- Pelnas perpardavus ---
     "SHOW_PROFIT": True,
-    "MIN_PROFIT_EUR": 15,            # nesiusti, jei galimas pelnas mazesnis (0 = nesvarbu)
+    "MIN_PROFIT_EUR": 10,            # nesiusti, jei numanomas pelnas mazesnis (0 = nesvarbu)
     # Kai skelbimas gerokai pigesnis uz KITA pigiausia – beveik visada kazkas negerai
     # (uzrakintas, be dalies, apgavyste). Santykis su kitu pigiausiu tokiu pat telefonu:
-    "SUSPICIOUS_REJECT_RATIO": 0.60, # pigiau nei 60% kito pigiausio – atmesti
+    "SUSPICIOUS_REJECT_RATIO": 0.60, # zemiau 60% kito pigiausio – papildomai tikrinti scam rizika
     "SUSPICIOUS_WARN_RATIO": 0.75,   # pigiau nei 75% – siusti, bet pazymeti ⚠️
     "SHOW_RANK": False,              # rodyti kortelej „12-as pigiausias iš 64 ...“ (atrankai naudojama visada)
 
