@@ -101,9 +101,7 @@ def _card(d, desc, reasons, hidden_reasons, dropped):
         lines.append(f"⚠️ <b>Defektai:</b> {html.escape(', '.join(d['defects']))}")
     lines.append(f"📦 <b>Būklė:</b> {html.escape(d.get('condition') or 'nenurodyta')}")
     if d.get("battery"):
-        low = ""
-        if d.get("battery_low"):
-            low = " ⚠️ žema, bet kaina gera" if config.cfg.get("MIN_BATTERY") else " ⚠️ žema – tikėtinas keitimas"
+        low = " ⚠️ žema, bet kaina gera" if d.get("battery_low") else ""
         lines.append(f"🔋 <b>Baterija:</b> {d['battery']}%{low}")
     else:
         lines.append("🔋 <b>Baterija:</b> nenurodyta")

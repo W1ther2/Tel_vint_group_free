@@ -109,12 +109,12 @@ class InflatedMedianTest(unittest.TestCase):
 class FlowTest(unittest.TestCase):
     def setUp(self):
         rank_config(SEARCH_QUERIES=["iPhone 13"], HEARTBEAT_HOURS=0, MIN_SAMPLES=8,
-                    MARKET_PERCENTILE=0.5, MIN_BATTERY=0, MIN_PROFIT_EUR=0)
+                    MARKET_PERCENTILE=0.5, MIN_BATTERY=0)
 
     def test_cheapest_sent_loud_others_silent(self):
         with TempDir():
             katalogas = market_items() + [
-                item(1, "iPhone 13 128GB", 205, user_id=1),   # pigiausias (ne itartinai)
+                item(1, "iPhone 13 128GB", 150, user_id=1),   # pigiausias
                 item(2, "iPhone 13 128GB", 258, user_id=2),   # tarp pigiausiu, bet ne 1-as
                 item(3, "iPhone 13 128GB", 330, user_id=3),   # brangus
             ]
@@ -217,96 +217,6 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(config.cfg["DEAL_MODE"], "discount")
         self.assertIn("pigiausių", commands.handle("/rezimas pigiausi", state))
         self.assertEqual(config.cfg["DEAL_MODE"], "rank")
-
-
-class SuspiciousAndProfitTest(unittest.TestCase):
-    """Tikras atvejis: „iPhone 14 – Užbluokuotas be akumo“ už 130 €, kai kiti nuo ~200 €."""
-
-    def setUp(self):
-        rank_config(SEARCH_QUERIES=["iPhone 13"], HEARTBEAT_HOURS=0, MIN_SAMPLES=8,
-                    MARKET_PERCENTILE=0.5, MIN_BATTERY=0, MIN_PROFIT_EUR=0,
-                    SUSPICIOUS_REJECT_RATIO=0.60, SUSPICIOUS_WARN_RATIO=0.75)
-
-    def run_with(self, price, page=None, user=None, photos=None, with_silent=False):
-        extra = {} if photos is None else {"photo_count": photos}
-        with TempDir():
-            katalogas = market_items() + [item(1, "iPhone 13 128GB", price, user_id=1, **extra)]
-            tg = FakeTelegram()
-            self.client = FakeClient({"iPhone 13": katalogas}, pages={"1": page} if page else None,
-                                     users={1: user} if user else None)
-            with contextlib.redirect_stdout(io.StringIO()) as out:
-                Run(self.client, tg, sleep=lambda s: None).run()
-            sent = {d["id"]: (d, silent) for d, silent in tg.deals}
-            deal, silent = sent.get("vinted:1", (None, None))
-            return (deal, silent, out.getvalue()) if with_silent else (deal, out.getvalue())
-
-    def test_far_below_everyone_sent_quietly_with_warning(self):
-        """2026-10-04: itin pigus (54 % kito pigiausio) – nebe atmetamas vien del kainos.
-        Be rizikos pozymiu siunciamas, bet TYLIAI ir su ⚠️."""
-        deal, silent, log = self.run_with(140, with_silent=True)
-        self.assertIsNotNone(deal, log)
-        self.assertTrue(deal["extreme_price"])
-        self.assertTrue(silent, "itin pigus – ne garsiai, nors ir 1-as pigiausias")
-        from vinted.telegram import format_card
-        self.assertIn("Įtartinai pigu", format_card(deal))
-
-    def test_junk_price_rejected_before_opening_listing(self):
-        """Dėklas / stiklas „iPhone 13“ pavadinimu uz 30 €: atmetama be skelbimo puslapio."""
-        deal, log = self.run_with(30)
-        self.assertIsNone(deal, log)
-        self.assertIn("per pigu (sugedęs / dalims / ne telefonas?)", log)
-        self.assertNotIn("1", self.client.page_requests, "skelbimo puslapis neatidarytas")
-
-    def test_extreme_with_scam_flag_rejected(self):
-        deal, log = self.run_with(140, page="Veikia puikiai, dėl greitesnio susitarimo rašyk į WhatsApp")
-        self.assertIsNone(deal, log)
-        self.assertIn("įtartinai pigu su papildomais rizikos požymiais", log)
-
-    def test_extreme_without_documents_is_not_scam(self):
-        """„be dėžutės ir dokumentų“ – iprasta naudotam telefonui: tik zyma, ne atmetimas."""
-        deal, log = self.run_with(140, page="Veikia puikiai, be dėžutės ir be dokumentų, siunčiu per Vinted")
-        self.assertIsNotNone(deal, log)
-        self.assertIn("be dokumentų / čekio", deal["risk_reasons"])
-
-    def test_extreme_accessory_description_rejected(self):
-        deal, log = self.run_with(140, page="Naujas silikoninis dėklas, tinka iPhone 13. Siunčiu per Vinted.")
-        self.assertIsNone(deal, log)
-        self.assertIn("įtartinai pigu su papildomais rizikos požymiais", log)
-
-    def test_extreme_new_account_and_empty_listing_rejected(self):
-        new_user = {"country_code": "LT", "feedback_reputation": 0, "feedback_count": 0,
-                    "given_item_count": 0, "created_at": "2026-10-01T00:00:00Z"}
-        deal, log = self.run_with(140, page="Veikia", user=new_user, photos=1)
-        self.assertIsNone(deal, log)
-        self.assertIn("įtartinai pigu su papildomais rizikos požymiais: 1", log)
-
-    def test_extreme_old_account_empty_listing_sent(self):
-        """Tuscias skelbimas, bet patikimas pardavejas – siunciam (tyliai)."""
-        deal, log = self.run_with(140, page="Veikia", photos=1)
-        self.assertIsNotNone(deal, log)
-
-    def test_not_extreme_not_flagged(self):
-        deal, log = self.run_with(230)
-        self.assertIsNotNone(deal, log)
-        self.assertFalse(deal["extreme_price"])
-
-    def test_noticeably_cheaper_sent_with_warning(self):
-        deal, log = self.run_with(180)          # 69% kito pigiausio
-        self.assertIsNotNone(deal, log)
-        self.assertAlmostEqual(deal["suspicious"]["ratio"], 180 / 260, places=3)
-        from vinted.telegram import format_card
-        self.assertIn("Įtartinai pigu", format_card(deal))
-
-    def test_normal_cheapest_no_warning(self):
-        deal, log = self.run_with(230)          # 88% – iprastas pigiausias
-        self.assertIsNotNone(deal, log)
-        self.assertNotIn("suspicious", deal)
-
-    def test_min_profit(self):
-        config.cfg["MIN_PROFIT_EUR"] = 1000
-        deal, log = self.run_with(230)
-        self.assertIsNone(deal)
-        self.assertIn("per mažas pelnas", log)
 
 
 if __name__ == "__main__":

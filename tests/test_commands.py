@@ -20,18 +20,6 @@ class CommandsTest(unittest.TestCase):
         self.assertNotIn("13", config.market_prices())
         self.assertIn("Nežinomas modelis", commands.handle("/kaina 7 100", self.state))
 
-    def test_alert_limit_command(self):
-        """/riba – kad pranesimas apie pasiekta MAX_ALERTS_PER_RUN butu i ka atsakyti."""
-        self.assertIn("30 pranešimų", commands.handle("/riba 30", self.state))
-        self.assertEqual(config.cfg["MAX_ALERTS_PER_RUN"], 30)
-        self.assertIn("Daugiausiai per paleidimą: 30", commands.handle("/nustatymai", self.state))
-        self.assertIn("išjungta", commands.handle("/riba 0", self.state))
-        self.assertEqual(config.cfg["MAX_ALERTS_PER_RUN"], 0)
-        self.assertIn("be ribos", commands.handle("/nustatymai", self.state))
-        self.assertIn("Neteisinga", commands.handle("/riba 500", self.state))
-        self.assertIn("Neteisinga", commands.handle("/riba daug", self.state))
-        self.assertEqual(config.cfg["MAX_ALERTS_PER_RUN"], 0, "bloga reiksme nieko nekeicia")
-
     def test_overrides_survive_reload(self):
         commands.handle("/kaina 13 180", self.state)
         commands.handle("/nuolaida 20", self.state)
@@ -100,28 +88,6 @@ class CommandsTest(unittest.TestCase):
         self.assertIsNone(commands.handle("/nezinoma", self.state))
         self.assertIn("/kaina", commands.handle("/pagalba", self.state))
 
-
-
-class DryRunEnvTest(unittest.TestCase):
-    """DRY_RUN=1 – nesiunciama ir Free bot'o komandos neskaitomos (offset nepajuda)."""
-
-    def test_env_forces_dry_run_and_no_commands(self):
-        import os
-        old = os.environ.get("DRY_RUN")
-        try:
-            os.environ["DRY_RUN"] = "1"
-            reset_config()
-            self.assertTrue(config.cfg["DRY_RUN"])
-            self.assertFalse(config.cfg["TELEGRAM_COMMANDS"])
-            os.environ["DRY_RUN"] = "0"
-            reset_config()
-            self.assertFalse(config.cfg["DRY_RUN"])
-            self.assertTrue(config.cfg["TELEGRAM_COMMANDS"])
-        finally:
-            if old is None:
-                os.environ.pop("DRY_RUN", None)
-            else:
-                os.environ["DRY_RUN"] = old
 
 if __name__ == "__main__":
     unittest.main()

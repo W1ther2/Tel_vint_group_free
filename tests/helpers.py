@@ -16,21 +16,11 @@ def reset_config(**overrides):
 
     VINTED_BROWSE_ALL ir DEAL_MODE="rank" cia isjungiami, nes dauguma testu tikrina
     atrankos logika su savo SEARCH_QUERIES ir nuolaidos ribomis. Abi veiksenos turi
-    atskirus testus (tests/test_vinted_browse.py, tests/test_rank.py).
-
-    MAX_ALERTS_PER_RUN isjungiama, kad riba netrumpintu testu, kurie tikrina atranka
-    su daug skelbimu; pati riba tikrinama tests/test_limits.py.
-
-    CONFIDENCE_STRICT isjungiamas, nes srauto testu rinka – 10–30 sintetiniu skelbimu
-    (vidutinis patikimumas), o ju tikrinami dalykai (salis, baterija, pakartojimai) su
-    rinkos kainos patikimumu nesusije; pats griežtinimas – tests/test_confidence.py.
-    Archyvas rasomas i laikina aplanka, kuri sukuria TempDir."""
+    atskirus testus (tests/test_vinted_browse.py, tests/test_rank.py)."""
     with contextlib.redirect_stdout(io.StringIO()):
         config.load("__nera__.json")
     config.cfg["VINTED_BROWSE_ALL"] = False
     config.cfg["DEAL_MODE"] = "discount"     # pigiausiu budas – tests/test_rank.py
-    config.cfg["MAX_ALERTS_PER_RUN"] = 0     # riba – tests/test_limits.py
-    config.cfg["CONFIDENCE_STRICT"] = False  # griežtinimas – tests/test_confidence.py
     config.cfg.update(overrides)
 
 

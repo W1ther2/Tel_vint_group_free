@@ -1,7 +1,6 @@
 {
   "SOURCES": [
-    "vinted",
-    "pirkpard"
+    "vinted"
   ],
   "PARALLEL_SOURCES": false,
   "VINTED_BROWSE_ALL": true,
@@ -60,12 +59,9 @@
   "RANK_MIN_PEERS": 8,
   "RANK_RECENT_DAYS": 2,
   "MIN_DISCOUNT": 0.1,
-  "JUNK_PRICE_RATIO": 0.25,
-  "JUNK_MIN_EUR": 25,
   "HARD_MIN_PRICE_RATIO": 0.4,
   "SUSPICIOUS_PRICE_RATIO": 0.55,
-  "MIN_BATTERY": 0,
-  "BATTERY_WARN_BELOW": 80,
+  "MIN_BATTERY": 80,
   "LOW_BATTERY_MIN_DISCOUNT": 0.3,
   "MODEL_MIN_PRICES": {},
   "TIDY_ONLY": true,

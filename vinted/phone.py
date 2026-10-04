@@ -240,33 +240,6 @@ def description_not_phone(description):
     return bool(DESCRIPTION_NOT_PHONE_RE.search(fold((description or "").lower())))
 
 
-# Itin pigiems skelbimams: ar APRASYMAS prasideda priedu („Naujas silikoninis dėklas…“,
-# „Ekrano apsauginis stiklas…“). Tikrinamas tik pirmas reiksmingas zodis – „su dėklu“,
-# „dėklas dovanų“ telefono skelbimo viduryje nesvarbu. „Ekranas“ ir „baterija“ cia NE
-# priedai: „Ekranas be įbrėžimų“, „Baterija 88%“ – iprastos telefono aprasymo pradzios.
-_DESC_ACCESSORY_NOUNS = ("dekl", "case", "cover", "stikl", "folij", "plevel", "etui", "obudow", "kuori",
-                         "suojakuori", "kuoret", "kaaned", "hulle", "huelle", "coque", "custodia", "funda",
-                         "kroviklis", "laidas", "kabelis", "glass")
-_DESC_SKIP_WORDS = {"naujas", "nauja", "nauji", "naujos", "silikoninis", "silikonine", "odinis", "odine",
-                    "skaidrus", "skaidri", "apsauginis", "apsaugine", "apsauginiai", "ekrano", "magnetinis",
-                    "originalus", "originalūs", "new", "silicone", "clear", "protective", "screen", "vnt",
-                    "2", "3", "x2", "x3", "parduodu", "parduodamas", "parduodama", "iphone"}
-# Jei aprasyme yra telefono pozymiu – tai telefono skelbimas, net jei prasideda „Dėklas dovanų…“
-_DESC_PHONE_EVIDENCE_RE = re.compile(r"veik|baterij|battery|\d{2,3}\s?%|\d{2,4}\s?gb|telefon|icloud|atrakint|"
-                                     r"ikrovim|kamer|face ?id|ekranas")
-
-
-def description_is_accessory(description):
-    text = fold((description or "").lower())
-    if not text.strip() or _DESC_PHONE_EVIDENCE_RE.search(text):
-        return False
-    for word in re.findall(r"\w+", text)[:6]:
-        if word in _DESC_SKIP_WORDS:
-            continue
-        return word.startswith(_DESC_ACCESSORY_NOUNS)
-    return False
-
-
 # Minimali realistiška tvarkingo telefono kaina (~45% iprastos naudoto kainos).
 # Pigiau = beveik visada dezute, dalys, sugedes ar apgavyste. Keiciama config.json "MODEL_MIN_PRICES".
 # Lentele – vinted/catalog.py (visi gamintojai vienoje vietoje).
@@ -472,11 +445,7 @@ def battery_factor(battery):
         return 0.97
     if battery >= 80:
         return 0.93
-    if battery >= 75:
-        return 0.85
-    if battery >= 70:                   # baterijos filtras isjungtas (MIN_BATTERY 0) – kaina
-        return 0.80                     # turi atspindeti tiketina baterijos keitima
-    return 0.75
+    return 0.85
 
 
 def estimate_value(market, condition, battery, defects):

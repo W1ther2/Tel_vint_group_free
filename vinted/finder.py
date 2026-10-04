@@ -17,8 +17,8 @@ from .language import detect_foreign_language, looks_lithuanian
 from .listing import split_uid
 from .phone import (detect_model, is_accessory, find_defects, extract_storage, extract_battery,
                     CONDITION_FACTOR, estimate_value, estimate_profit, MODEL_ORDER, condition_ok,
-                    description_not_phone, description_is_accessory, min_price, model_wanted, display)
-from .risk import assess_risk, PICKUP_LABEL, PLATFORM_CONTACT_FLAGS, STRONG_SCAM_FLAGS
+                    description_not_phone, min_price, model_wanted, display)
+from .risk import assess_risk, PICKUP_LABEL
 from .sources import build_sources, label as source_label
 from .limiter import rate_floor
 from .sources.vinted_source import VintedSource
@@ -153,22 +153,26 @@ class Run:
                 return self.reject("ne tarp pigiausių",
                                    f"{display(model)} {price:.0f}€ – {rank.place}-as iš {rank.n} "
                                    f"({rank.low:.0f}–{rank.high:.0f}€)")
-            # Labai maza kaina pati savaime nera atmetimo priezastis: tai gali buti tikras dealas.
-            # Rizika tikrinsim po aprasymo ir pardavejo duomenu patikros.
+            # Gerokai pigesnis uz kita pigiausia tokį pat telefona – beveik visada kazkas
+            # negerai (pvz. „iPhone 14 uzbluokuotas be akumo“ uz 130 €, kai kiti nuo 200 €).
+            ratio = self.suspicious_ratio(rank, price)
+            if ratio is not None and ratio < c["SUSPICIOUS_REJECT_RATIO"]:
+                self.new_seen[uid] = time.time()
+                return self.reject_bad(uid, "itartinai", "įtartinai pigu",
+                                   f"{display(model)} {price:.0f}€ – kitas pigiausias {rank.peer_low:.0f}€ "
+                                   f"({1 - ratio:.0%} pigiau)")
         else:
             best_case = quote.price * CONDITION_FACTOR.get(cat_condition, 1.08) * 1.03
             if price > best_case * (1 - c["MIN_DISCOUNT"]):
                 self.new_seen[uid] = time.time()
                 return self.reject("per brangu")
-        # Slamsto riba: tokia kaina beveik niekada nebuna veikiantis telefonas (deklas, stiklas,
-        # dezute, dalims). Riba ZEMA – max(JUNK_MIN_EUR, JUNK_PRICE_RATIO x vertes): iPhone 13
-        # (~250 €) – ~62 €, iPhone 11 (~70 €) – 25 €. Tarp jos ir SUSPICIOUS_REJECT_RATIO /
-        # HARD_MIN_PRICE_RATIO skelbimas atidaromas ir tikrinamas extreme_price_verdict().
-        junk_floor = max(c["JUNK_MIN_EUR"], quote.price * c["JUNK_PRICE_RATIO"])
-        if price < junk_floor:
+        # Riba: 40% rinkos kainos arba modelio minimali kaina – kuri mazesne (kad
+        # apytiksle kaina ar mano ivertinta minimali kaina neatmestu tikru pigiu telefonu)
+        floor = min(quote.price * c["HARD_MIN_PRICE_RATIO"], min_price(model) or float("inf"))
+        if price < floor:
             self.new_seen[uid] = time.time()
             return self.reject("per pigu (sugedęs / dalims / ne telefonas?)",
-                               f"{title[:40]} {price:.0f}€ (riba {junk_floor:.0f}€, rinka {quote.price:.0f}€)")
+                               f"{title[:40]} {price:.0f}€ (riba {floor:.0f}€, rinka {quote.price:.0f}€)")
         self.new_seen[uid] = time.time()
         if c["PAUSED"]:
             # Pauze tikrinam PRIES skelbimo puslapi: kainu istorija toliau kaupiasi
@@ -259,8 +263,6 @@ class Run:
             if not isskirtine:
                 return self.reject_bad(uid, "baterija", "baterija", f"{title[:40]} {battery}%")
             battery_low = True
-        elif battery is not None and battery < c["BATTERY_WARN_BELOW"]:
-            battery_low = True          # filtras isjungtas – nesiuntimo nera, bet kortelėje ⚠️
 
         # 3) Pardavejas
         seller = detail.seller or listing.seller or {}
@@ -306,15 +308,6 @@ class Run:
 
         risk_level, risk_reasons = assess_risk(detail.title or title, description, price, quote.price,
                                                seller, listing.photo_count)
-
-        extreme = self.is_extreme_price(rank, price, quote)
-        if extreme:
-            why = self.extreme_price_verdict(source.name, risk_reasons, seller, description,
-                                             listing.photo_count)
-            if why:
-                return self.reject_bad(uid, "itartinai", "įtartinai pigu su papildomais rizikos požymiais",
-                                       f"{display(model)} {price:.0f}€; {why}")
-
         profit = estimate_profit(price, value, pickup_only=PICKUP_LABEL in risk_reasons,
                                  buyer_fee=getattr(source, "buyer_protection_fee", True),
                                  total_price=listing.total_price)
@@ -328,7 +321,7 @@ class Run:
             "quote": quote, "value": value, "discount": discount, "profit": profit,
             "seller": seller, "risk_level": risk_level, "risk_reasons": risk_reasons,
             "drop_from": drop_from, "created_at": listing.created_at, "rank": rank,
-            "confidence": confidence, "extreme_price": extreme,
+            "confidence": confidence,
             "age": human_age(listing.created_at),
         }
         if c["MIN_PROFIT_EUR"] and profit is not None and profit < c["MIN_PROFIT_EUR"]:
@@ -369,46 +362,6 @@ class Run:
         self.new_seen.pop(uid, None)
         self.reject(f"{reason} – bandysiu vėliau", title[:45])
         return True
-
-    @staticmethod
-    def is_extreme_price(rank, price, quote):
-        """Itin pigu: < SUSPICIOUS_REJECT_RATIO kito pigiausio ARBA < HARD_MIN_PRICE_RATIO vertes.
-        Tai ne atmetimas, o papildomos patikros signalas (extreme_price_verdict)."""
-        c = config.cfg
-        peer = Run.suspicious_ratio(rank, price)
-        market = price / quote.price if quote is not None and quote.price else None
-        return bool((peer is not None and peer < c["SUSPICIOUS_REJECT_RATIO"])
-                    or (market is not None and market < c["HARD_MIN_PRICE_RATIO"]))
-
-    @staticmethod
-    def extreme_price_verdict(source_name, risk_reasons, seller, description, photo_count):
-        """Itin pigus skelbimas: priezastis atmesti arba None (siunciama tyliai su ⚠️).
-
-        Atmetam, kai:
-          - aiskus apgavystes ar vagystes pozymis (STRONG_SCAM_FLAGS; Vinted'e – ir bet koks
-            kontaktas uz platformos ribu). Pirkpard'e telefono nr. ir „skambink“ iprasti, bet
-            susirasinejimas per WhatsApp/Telegram ir mokejimas pavedimu – ne: ten atsiskaitoma
-            platformoje (zr. sources/pirkpard.py);
-          - daug neigiamu atsiliepimu;
-          - aprasymas – apie priedą (deklas, stiklas...), o ne telefona;
-          - nauja / atsiliepimu neturinti paskyra IR tuscias skelbimas."""
-        c = config.cfg
-        reasons = list(risk_reasons or [])
-        hard = set(STRONG_SCAM_FLAGS)
-        if source_name == "vinted":
-            hard.update(PLATFORM_CONTACT_FLAGS)
-        found = [r for r in reasons if r in hard or r.startswith("daug neigiamų atsiliepimų")]
-        if found:
-            return "rizika: " + ", ".join(found)
-        if description_is_accessory(description):
-            return "aprašymas apie priedą, ne telefoną"
-        seller = seller or {}
-        age, reviews = seller.get("account_age_days"), seller.get("reviews")
-        weak_profile = (age is not None and age < c["SELLER_NEW_ACCOUNT_DAYS"]) or reviews == 0
-        sparse = len((description or "").strip()) < 25 and (photo_count is None or photo_count <= 1)
-        if weak_profile and sparse:
-            return "nauja / be atsiliepimų paskyra ir tuščias skelbimas"
-        return None
 
     @staticmethod
     def suspicious_ratio(rank, price):
@@ -1005,8 +958,6 @@ class Run:
                     # ta pacia spejama verte, kuria ir nepasitikim)
                     silent = (rank.place != 1) if rank is not None \
                         else deal["discount"] < c["LOUD_DISCOUNT"]
-                    if deal.get("extreme_price"):
-                        silent = True       # itin pigus – siunciam, bet ne garsiai (⚠️ korteleje)
                     if not self.tg.send_deal(deal, silent=silent):
                         # Telegram neatsake (tinklo klaida, blokas). Anksciau dealas vis tiek
                         # buvo pazymimas matytu ir „pranestu“, tad geras pasiulymas dingdavo

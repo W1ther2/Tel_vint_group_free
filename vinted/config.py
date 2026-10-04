@@ -95,23 +95,16 @@ DEFAULTS = {
     # jau parduoti – su jais lyginti butu tas pats, kas lyginti su nebeegzistuojanciais.
     "RANK_RECENT_DAYS": 2,
     "MIN_DISCOUNT": 0.10,            # bent 10% pigiau nei telefono verte
-    # Maza kaina – trys pakopos (zr. finder.Run.extreme_price_verdict):
-    #   JUNK_*                  – zemiau: ATMETAMA pries atidarant skelbima (deklas, stiklas, dalims)
-    #   HARD_MIN_PRICE_RATIO    – x vertes  } zemiau bet kurios is siu – „itin pigu“: skelbimas atidaromas,
-    #   SUSPICIOUS_REJECT_RATIO – x kito    } atmetamas tik su rizikos pozymiais, kitaip siunciamas
-    #                             pigiausio } TYLIAI su ⚠️ (pavadinimas istorinis – pats nebeatmeta)
+    # „Per pigu“ – keturios ribos, kiekviena savo vietoje:
+    #   HARD_MIN_PRICE_RATIO    – x rinkos kainos: ATMETAMA pries atidarant skelbima (dalys, dezute)
+    #   SUSPICIOUS_REJECT_RATIO – x KITO pigiausio tokio pat skelbimo: ATMETAMA („rank“ rezime)
     #   SUSPICIOUS_WARN_RATIO   – x kito pigiausio: siunciama su ⚠️ „Įtartinai pigu“
     #   SUSPICIOUS_PRICE_RATIO  – x rinkos kainos: siunciama, bet rizikos eiluteje prirasoma priezastis
-    "JUNK_PRICE_RATIO": 0.25,        # pigiau nei 25% vertes ...
-    "JUNK_MIN_EUR": 25,              # ... arba nei 25 € – ne telefonas (iPhone 13 riba ~62 €, iPhone 11 – 25 €)
-    "HARD_MIN_PRICE_RATIO": 0.40,    # pigiau nei 40% vertes – itin pigu (papildoma patikra, tyliai)
+    "HARD_MIN_PRICE_RATIO": 0.40,    # pigiau nei 40% rinkos – beveik visada sugedes/dalims/ne telefonas, atmetama
     "SUSPICIOUS_PRICE_RATIO": 0.55,  # pigiau nei 55% rinkos – siunciama, bet pazymima rizika
-    # Baterija: MIN_BATTERY > 0 – filtras (per maza -> atmetama, isimtis – labai pigu).
-    # Isjungus (0) baterija vis tiek mazina verte (phone.battery_factor) ir < BATTERY_WARN_BELOW
-    # kortelėje pazymima ⚠️.
-    "MIN_BATTERY": 0,                # 0 = baterija neatmeta
-    "BATTERY_WARN_BELOW": 80,        # zemiau – ⚠️ kortelėje (tiketinas baterijos keitimas)
-    "LOW_BATTERY_MIN_DISCOUNT": 0.30,  # naudojama tik ijungus MIN_BATTERY filtra
+    # Baterija: nurodyta ir per maza -> atmetama; nenurodyta -> praleidziama su zyma kortelėje.
+    "MIN_BATTERY": 80,               # min. baterijos % (0 = netikrinti)
+    "LOW_BATTERY_MIN_DISCOUNT": 0.30,  # isimtis: labai pigus telefonas praleidziamas ir su mazesne baterija
     "MODEL_MIN_PRICES": {},          # savos min. kainos modeliams, pvz. {"13": 100} (kitiems – numatytosios)
 
     # --- Tik tvarkingi telefonai ---
@@ -167,9 +160,10 @@ DEFAULTS = {
 
     # --- Pelnas perpardavus ---
     "SHOW_PROFIT": True,
-    "MIN_PROFIT_EUR": 10,            # nesiusti, jei numanomas pelnas mazesnis (0 = nesvarbu)
-    # Santykis su KITU pigiausiu tokiu pat telefonu (daznai – uzrakintas, be dalies, apgavyste):
-    "SUSPICIOUS_REJECT_RATIO": 0.60, # zemiau 60% – itin pigu: atmetama tik su rizikos pozymiais, kitaip tyliai
+    "MIN_PROFIT_EUR": 15,            # nesiusti, jei galimas pelnas mazesnis (0 = nesvarbu)
+    # Kai skelbimas gerokai pigesnis uz KITA pigiausia – beveik visada kazkas negerai
+    # (uzrakintas, be dalies, apgavyste). Santykis su kitu pigiausiu tokiu pat telefonu:
+    "SUSPICIOUS_REJECT_RATIO": 0.60, # pigiau nei 60% kito pigiausio – atmesti
     "SUSPICIOUS_WARN_RATIO": 0.75,   # pigiau nei 75% – siusti, bet pazymeti ⚠️
     "SHOW_RANK": False,              # rodyti kortelej „12-as pigiausias iš 64 ...“ (atrankai naudojama visada)
 
@@ -306,23 +300,6 @@ load_error = ""
 
 def load(path=CONFIG_FILE):
     """Ikelia config.json i `cfg` (vietoje). Grazina cfg."""
-    _load(path)
-    return _dry_run_from_env()
-
-
-def _dry_run_from_env():
-    """DRY_RUN=1 aplinkoje – nieko nesiusti IR neskaityti Telegram komandu.
-
-    Rankiniai / staging paleidimai naudoja ta pati bot'o token'a kaip gyvas Free senderis:
-    getUpdates patvirtintu jo komandas (pastumtu offset'a), ir gyvas botas ju nebegautu.
-    Todel sausas paleidimas komandu neliecia visai."""
-    if os.environ.get("DRY_RUN", "").strip().lower() in ("1", "true", "yes"):
-        cfg["DRY_RUN"] = True
-        cfg["TELEGRAM_COMMANDS"] = False
-    return cfg
-
-
-def _load(path):
     global load_error
     load_error = ""
     cfg.clear()
