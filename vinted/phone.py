@@ -236,8 +236,52 @@ DESCRIPTION_NOT_PHONE_RE = re.compile(
 )
 
 
+# Aprasymas apie PRIEDA, o ne telefona: pavadinimas „iPhone 12 mini“, o aprasyme „Dėklas“,
+# „Naujas silikoninis dėklas“, „Parduodu dėklą“, „Dėžutė nuo iPhone 13“. Telefono skelbime
+# priedai minimi kitaip („dėklas dovanų“, „pridedu dėklą“, „visada laikytas dėkle“,
+# „dėžutė yra“) – tokie neatmetami.
+_ACC_ADJ = (r"(?:(?:nauj|silikonin|odin|skaidr|original|magsafe|minkst|kiet|telefono|phone|new|clear|"
+            r"silicone|leather|juod|balt|rozin|ruzav|melyn|raudon|zali|violet|pilk|auksin|sidabrin)\w*\s+){0,3}")
+_ACC_ITEM = (r"(?:dekl(?:as|ai|a|u|us|iuk\w*)|dekliuk\w*|case|cover|krovikl(?:is|iai|i|iu|ius)|charger|"
+             r"kabel(?:is|iai|i|ius)|laid(?:as|ai|a|us)|cable|dezut(?:e|es|ute)|"
+             r"(?:apsaugin|grudint)\w* stikl\w*|stiklel\w*|screen protector|(?:ekrano|kameros) apsaug\w*)")
+# Bet kurioje vietoje: „Parduodu dėklą“, „parduodamas naujas dėklas“, „telefonas neparduodamas“
+_SELLS_ACCESSORY_RE = re.compile(
+    r"\bparduod\w*\s+" + _ACC_ADJ + _ACC_ITEM + r"\b"
+    r"|\btelefon(?:as|o)\s+neparduod\w*|\bneparduod\w*\s+telefon\w*")
+# Trumpas aprasymas, prasidedantis priedu („Dėklas“, „Silikoninis dėklas, juodas“) ar
+# „Tinka iPhone 13“ / „for iPhone 13“ – jei jame nera nieko apie pati telefona
+_STARTS_WITH_ACCESSORY_RE = re.compile(
+    r"^\W*(?:" + _ACC_ADJ + _ACC_ITEM + r"\b|(?:tinka|skirt\w*|for|fits?|compatible)\s+"
+    r"(?:su\s+|with\s+)?(?:apple\s+)?iphone)")
+_PHONE_SIGNAL_RE = re.compile(
+    r"\btelefon(?:as|a)\b|\bveik\w*|\bbaterij\w*|\bakumuliator\w*|\bbattery|\bicloud|\bface ?id|"
+    r"\b\d{2,3}\s?%|\b(?:64|128|256|512)\s?(?:gb|g)\b|\b1\s?tb\b|\bdovan\w*|\bprided\w*|\bkartu\b|"
+    r"\bkomplekt\w*|\bincl\w*|\bgratis\b|\bfree\b|\byra\b|\bnera\b|\bneturi\w*|\buzklijuot\w*|"
+    r"\bekran(?:as|e)\b|\+")
+SHORT_DESCRIPTION = 120
+# Ne pardavimas ar ne tikras telefonas: „Perku iPhone 13“, „Ieškau iPhone 13...“, „Rezervuota“,
+# „Kopija, labai panašus į originalą“, „Kaina už abu telefonus“. Iprasti sakiniai lieka:
+# „Ieškau naujo savininko“, „Originalus, ne kopija“, „Pridedu čekio kopiją“.
+_NOT_A_SALE_RE = re.compile(
+    r"^\W*(?:(?:perku|pirksiu|nupirksiu|ieskau|ieskome|buying|looking for)\s+(?:apple\s+)?(?:iphone|telefon\w*)\b"
+    r"|rezervuot(?:a|as)\b|reserved\b|kopij\w*)"
+    r"|\b(?:tai|telefonas)\s+(?:yra\s+)?kopij\w*\b"
+    r"|\bkaina\s+uz\s+(?:abu|abi|abudu|abidvi|du|dvi|tris)\b")
+
+
+def description_is_accessory(description):
+    t = fold((description or "").lower()).strip()
+    if _SELLS_ACCESSORY_RE.search(t):
+        return True
+    return (len(t) <= SHORT_DESCRIPTION and bool(_STARTS_WITH_ACCESSORY_RE.search(t))
+            and not _PHONE_SIGNAL_RE.search(t))
+
+
 def description_not_phone(description):
-    return bool(DESCRIPTION_NOT_PHONE_RE.search(fold((description or "").lower())))
+    t = fold((description or "").lower())
+    return (bool(DESCRIPTION_NOT_PHONE_RE.search(t) or _NOT_A_SALE_RE.search(t.strip()))
+            or description_is_accessory(description))
 
 
 # Minimali realistiška tvarkingo telefono kaina (~45% iprastos naudoto kainos).

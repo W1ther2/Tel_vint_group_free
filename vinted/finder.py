@@ -173,6 +173,14 @@ class Run:
             self.new_seen[uid] = time.time()
             return self.reject("per pigu (sugedęs / dalims / ne telefonas?)",
                                f"{title[:40]} {price:.0f}€ (riba {floor:.0f}€, rinka {quote.price:.0f}€)")
+        # Palyginimo nera, tad „kito pigiausio“ patikra (aukščiau) neveikia. Gyvai tai ~1/3
+        # modeliu (XR, 12 Pro, 13 Pro Max...): be sitos ribos „iPhone XR“ uz 35 € ar „13 Pro Max“
+        # uz 120 € (~45 % rinkos) praeidavo iki pat aprasymo.
+        if rank is None and price < quote.price * c["NO_RANK_REJECT_RATIO"]:
+            self.new_seen[uid] = time.time()
+            return self.reject_bad(uid, "itartinai", "įtartinai pigu",
+                                   f"{display(model)} {price:.0f}€ – rinka {quote.price:.0f}€ "
+                                   f"({1 - price / quote.price:.0%} pigiau, palyginimo nėra)")
         self.new_seen[uid] = time.time()
         if c["PAUSED"]:
             # Pauze tikrinam PRIES skelbimo puslapi: kainu istorija toliau kaupiasi
