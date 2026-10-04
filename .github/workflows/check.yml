@@ -2,8 +2,10 @@ name: Vinted deal finder
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
-  workflow_dispatch:
+    # Kas 15 min. GitHub suplanuotus paleidimus gali smarkiai atideti (nuo 2026-10-03 – kas
+    # 2–8 val.), tad patikimiausia juos zadinti is isores per workflow_dispatch (zr. zemiau).
+    - cron: "*/15 * * * *"
+  workflow_dispatch:     # rankinis arba isorinis zadintuvas (pvz. cron-job.org kas 15 min.)
   push:
     branches: [main]
 
