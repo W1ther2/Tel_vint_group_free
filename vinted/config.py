@@ -95,16 +95,16 @@ DEFAULTS = {
     # jau parduoti – su jais lyginti butu tas pats, kas lyginti su nebeegzistuojanciais.
     "RANK_RECENT_DAYS": 2,
     "MIN_DISCOUNT": 0.10,            # bent 10% pigiau nei telefono verte
-    # „Per pigu“ – keturios ribos, kiekviena savo vietoje:
+    # Itartinai maza kaina paleidzia papildoma patikra, bet viena pati dealo neatmeta:
     #   HARD_MIN_PRICE_RATIO    – labai maza kaina privercia papildomai tikrinti apgavystes pozymius
     #   SUSPICIOUS_REJECT_RATIO – labai maza kaina pries kita pigiausia sukelia papildoma rizikos patikra
     #   SUSPICIOUS_WARN_RATIO   – x kito pigiausio: siunciama su ⚠️ „Įtartinai pigu“
     #   SUSPICIOUS_PRICE_RATIO  – x rinkos kainos: siunciama, bet rizikos eiluteje prirasoma priezastis
     "HARD_MIN_PRICE_RATIO": 0.40,    # pigiau nei 40% rinkos – papildomos apgavystes patikros signalas
     "SUSPICIOUS_PRICE_RATIO": 0.55,  # pigiau nei 55% rinkos – siunciama, bet pazymima rizika
-    # Baterija: nurodyta ir per maza -> atmetama; nenurodyta -> praleidziama su zyma kortelėje.
+    # Baterija rodoma korteleje; MIN_BATTERY > 0 leidzia ja vel naudoti kaip filtra.
     "MIN_BATTERY": 0,                # baterijos procentas rodomas, bet ribotuvas isjungtas
-    "LOW_BATTERY_MIN_DISCOUNT": 0.30,  # isimtis: labai pigus telefonas praleidziamas ir su mazesne baterija
+    "LOW_BATTERY_MIN_DISCOUNT": 0.30,  # naudojama tik ijungus MIN_BATTERY filtra
     "MODEL_MIN_PRICES": {},          # savos min. kainos modeliams, pvz. {"13": 100} (kitiems – numatytosios)
 
     # --- Tik tvarkingi telefonai ---
