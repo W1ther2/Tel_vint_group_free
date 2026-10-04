@@ -77,22 +77,3 @@ def assess_risk(title, description, price, market, seller=None, photo_count=None
         return None, []
     level = "didelė" if score >= 4 else "vidutinė" if score >= 2 else "maža"
     return level, reasons
-
-
-# Itartinai pigus skelbimas (finder: NO_RANK_STRICT_RATIO) siunciamas tik tada, kai aprasymas
-# aiskiai sako, kad telefonas veikia, ir nera jokiu kitu rizikos pozymiu.
-_WORKS_RE = re.compile(r"\bveik\w*|\btvarking\w*|\bbe (?:jokiu )?(?:defekt|problem|gedim|bed)\w*|"
-                       r"\bviskas (?:gerai|puikiai|ok|tvarkoj)\w*|\bworks?\b|\bworking\b|\bfunctional\b")
-_NOT_WORKS_RE = re.compile(r"\bneveik\w*|\bne (?:viskas |pilnai |visai |iki galo )?veik\w*|\bnot work\w*")
-# Sie pozymiai pigiam skelbimui netrukdo: atsiemimas is ranku, skubus pardavimas, perpardavejas
-# ir pati kaina (ji ir yra priezastis, kodel tikrinama papildomai).
-_CHEAP_TOLERATED = (PICKUP_LABEL, "skubus pardavimas", "perpardavėjas", "pigiau nei rinka")
-
-
-def cheap_listing_problems(description, reasons):
-    """Kodel itartinai pigus skelbimas nesiunciamas ([] – siunciamas)."""
-    t = fold((description or "").lower())
-    problems = [r for r in reasons if not any(ok in r for ok in _CHEAP_TOLERATED)]
-    if not _WORKS_RE.search(t) or _NOT_WORKS_RE.search(t):
-        problems.append("aprašyme neparašyta, kad veikia")
-    return problems

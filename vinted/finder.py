@@ -18,7 +18,7 @@ from .listing import split_uid
 from .phone import (detect_model, is_accessory, find_defects, extract_storage, extract_battery,
                     CONDITION_FACTOR, estimate_value, estimate_profit, MODEL_ORDER, condition_ok,
                     description_not_phone, min_price, model_wanted, display)
-from .risk import assess_risk, cheap_listing_problems, PICKUP_LABEL
+from .risk import assess_risk, PICKUP_LABEL
 from .sources import build_sources, label as source_label
 from .limiter import rate_floor
 from .sources.vinted_source import VintedSource
@@ -173,10 +173,6 @@ class Run:
             self.new_seen[uid] = time.time()
             return self.reject("per pigu (sugedęs / dalims / ne telefonas?)",
                                f"{title[:40]} {price:.0f}€ (riba {floor:.0f}€, rinka {quote.price:.0f}€)")
-        # Palyginimo nera, tad „kito pigiausio“ patikra (aukščiau) neveikia. Gyvai tai ~1/3
-        # modeliu (XR, 12 Pro, 13 Pro Max...). Gerokai pigiau nei rinka neatmetam – pasitaiko ir
-        # veikiantis XR uz 35 € – bet toks skelbimas turi praeiti papildoma patikra (zemiau).
-        cheap_check = rank is None and price < quote.price * c["NO_RANK_STRICT_RATIO"]
         self.new_seen[uid] = time.time()
         if c["PAUSED"]:
             # Pauze tikrinam PRIES skelbimo puslapi: kainu istorija toliau kaupiasi
@@ -312,12 +308,6 @@ class Run:
 
         risk_level, risk_reasons = assess_risk(detail.title or title, description, price, quote.price,
                                                seller, listing.photo_count)
-        if cheap_check:
-            problems = cheap_listing_problems(description, risk_reasons)
-            if problems:
-                return self.reject_bad(uid, "itartinai", "įtartinai pigu (nepraėjo papildomos patikros)",
-                                       f"{display(model)} {price:.0f}€, rinka {quote.price:.0f}€: "
-                                       f"{'; '.join(problems)}")
         profit = estimate_profit(price, value, pickup_only=PICKUP_LABEL in risk_reasons,
                                  buyer_fee=getattr(source, "buyer_protection_fee", True),
                                  total_price=listing.total_price)
