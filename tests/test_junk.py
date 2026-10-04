@@ -1,5 +1,5 @@
 """Slamstas, kuris neturi patekti i grupe: priedai su telefono pavadinimu, itartinai pigus
-retu modeliu skelbimai. Ir zema baterija, kai MIN_BATTERY=0 (2026-10-04 riba nuimta)."""
+retu modeliu skelbimai be papildomu irodymu. Ir zema baterija, kai MIN_BATTERY=0 (2026-10-04)."""
 import contextlib
 import io
 import unittest
@@ -13,13 +13,17 @@ from vinted.phone import description_not_phone
 OK = "Parduodu telefoną, veikia puikiai, siunčiu per Vinted"
 # Tik 4 skelbimai – palyginti per mazai (RANK_MIN_PEERS=8), vertinama pagal nuolaida
 RARE = [item(2000 + i, "iPhone 12 mini 64GB", p, user_id=600 + i) for i, p in enumerate([190, 210, 230, 250])]
+RARE_XR = [item(3000 + i, "iPhone XR 64GB", p, user_id=700 + i) for i, p in enumerate([70, 75, 80, 85])]
+NEW_SELLER = {"country_code": "LT", "city": "Vilnius", "feedback_reputation": 0, "feedback_count": 0,
+              "given_item_count": 0, "created_at": "2026-10-01T00:00:00Z"}
 
 
-def run(query, market, title, price, desc):
+def run(query, market, title, price, desc, user=None, **extra):
     config.cfg["SEARCH_QUERIES"] = [query]
     with TempDir():
         tg = FakeTelegram()
-        client = FakeClient({query: list(market) + [item(9, title, price, user_id=9)]}, pages={"9": desc})
+        client = FakeClient({query: list(market) + [item(9, title, price, user_id=9, **extra)]}, pages={"9": desc},
+                            users={9: user} if user else None)
         with contextlib.redirect_stdout(io.StringIO()) as out:
             Run(client, tg, sleep=lambda s: None).run()
         sent = [d for d, _ in tg.deals if d["id"] == "vinted:9"]
@@ -76,13 +80,31 @@ class JunkFlowTest(unittest.TestCase):
         self.assertIsNone(deal)
         self.assertIn("ne telefonas (pagal aprašymą)", log)
 
-    def test_no_rank_suspiciously_cheap(self):
-        """Be palyginimo: < NO_RANK_REJECT_RATIO rinkos kainos – atmetama, net jei virs min. kainos."""
-        deal, log = run("iPhone 12 mini", RARE, "iPhone 12 mini", 75, OK)
+    def test_working_xr_for_35_is_sent(self):
+        """Pasitaiko ir pilnai veikiantis XR uz 35 €: < NO_RANK_STRICT_RATIO rinkos neatmetam,
+        jei aprasyme parasyta, kad veikia, ir nera apgavystes pozymiu."""
+        deal, _ = run("iPhone XR", RARE_XR, "iPhone XR", 35, "Pilnai veikiantis, baterija 85%, siunčiu per Vinted")
+        self.assertIsNotNone(deal)
+        self.assertTrue(any("pigiau nei rinka" in r for r in deal["risk_reasons"]), deal["risk_reasons"])
+        deal, log = run("iPhone XR", RARE_XR, "iPhone XR", 35, "Parduodu, nes nebereikia, siunčiu per Vinted")
         self.assertIsNone(deal)
-        self.assertIn("įtartinai pigu", log)
-        self.assertIn("palyginimo nėra", log)
-        deal, _ = run("iPhone 12 mini", RARE, "iPhone 12 mini", 100, OK)
+        self.assertIn("nepraėjo papildomos patikros", log)
+        self.assertIn("neparašyta, kad veikia", log)
+
+    def test_suspiciously_cheap_needs_clean_listing(self):
+        works = "Telefonas veikia puikiai, siunčiu per Vinted"
+        self.assertIsNotNone(run("iPhone 12 mini", RARE, "iPhone 12 mini", 75, works)[0])
+        for desc, kwargs in [(works, {"user": NEW_SELLER}),             # nauja paskyra, be atsiliepimu
+                             (works, {"photo_count": 1}),               # tik 1 nuotrauka
+                             ("Veikia, rašykite WhatsApp", {}),         # ne per Vinted
+                             ("Veikia", {}),                            # beveik tuscias aprasymas
+                             ("Ne viskas veikia, siunčiu per Vinted", {})]:
+            deal, log = run("iPhone 12 mini", RARE, "iPhone 12 mini", 75, desc, **kwargs)
+            self.assertIsNone(deal, (desc, kwargs))
+            self.assertIn("nepraėjo papildomos patikros", log)
+
+    def test_normal_price_has_no_extra_checks(self):
+        deal, _ = run("iPhone 12 mini", RARE, "iPhone 12 mini", 100, "Parduodu, nes nebereikia, siunčiu per Vinted")
         self.assertIsNotNone(deal)
         deal, _ = run("iPhone 12 mini", RARE, "iPhone 12 mini", 100, "Dėklas iPhone 12 mini")
         self.assertIsNone(deal)

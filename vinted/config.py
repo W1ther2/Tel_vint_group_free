@@ -98,12 +98,13 @@ DEFAULTS = {
     # „Per pigu“ – penkios ribos, kiekviena savo vietoje:
     #   HARD_MIN_PRICE_RATIO    – x rinkos kainos: ATMETAMA pries atidarant skelbima (dalys, dezute)
     #   SUSPICIOUS_REJECT_RATIO – x KITO pigiausio tokio pat skelbimo: ATMETAMA („rank“ rezime)
-    #   NO_RANK_REJECT_RATIO    – x rinkos kainos: ATMETAMA, kai palyginti nera su kuo (retas modelis)
+    #   NO_RANK_STRICT_RATIO    – x rinkos kainos, kai palyginti nera su kuo: siunciama TIK jei aprasyme
+    #                             parasyta, kad veikia, ir nera apgavystes pozymiu (risk.py)
     #   SUSPICIOUS_WARN_RATIO   – x kito pigiausio: siunciama su ⚠️ „Įtartinai pigu“
     #   SUSPICIOUS_PRICE_RATIO  – x rinkos kainos: siunciama, bet rizikos eiluteje prirasoma priezastis
     "HARD_MIN_PRICE_RATIO": 0.40,    # pigiau nei 40% rinkos – beveik visada sugedes/dalims/ne telefonas, atmetama
     "SUSPICIOUS_PRICE_RATIO": 0.55,  # pigiau nei 55% rinkos – siunciama, bet pazymima rizika
-    "NO_RANK_REJECT_RATIO": 0.50,    # be palyginimo: pigiau nei 50% rinkos – atmetama (įtartinai pigu)
+    "NO_RANK_STRICT_RATIO": 0.50,    # be palyginimo: pigiau nei 50% rinkos – papildoma aprasymo patikra
     # Baterija: nurodyta ir per maza -> atmetama; nenurodyta -> praleidziama su zyma kortelėje.
     "MIN_BATTERY": 80,               # min. baterijos % (0 = netikrinti)
     "LOW_BATTERY_MIN_DISCOUNT": 0.30,  # isimtis: labai pigus telefonas praleidziamas ir su mazesne baterija
