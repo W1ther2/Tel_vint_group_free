@@ -15,14 +15,20 @@ RISK_PATTERNS = [
      r"outside vinted|not through vinted", "mokėjimas ne per Vinted", 2),
     (r"tik atsiemim\w*|atsiemim\w* tik|tik is rank\w*|tik gyvai|tik susitik\w*|nesiunci\w*|siuntimo nera|"
      r"pickup only|only pickup|no shipping|collection only", "tik atsiėmimas iš rankų", 1),
-    (r"be doku\w*|be ceki\w*|rast\w* telefon\w*|nezinau slaptazodz\w*|pamirst\w* slaptazodz\w*",
-     "gali būti vogtas / be dokumentų", 2),
+    (r"rast\w* telefon\w*|nezinau slaptazodz\w*|pamirst\w* slaptazodz\w*", "gali būti vogtas", 2),
+    # „be dėžutės ir dokumentų“ – iprasta naudotam telefonui; tik zyma, ne vagystes pozymis
+    (r"be doku\w*|be ceki\w*", "be dokumentų / čekio", 1),
     (r"skubiai|skubus|urgent|greitai parduod\w*|isvykst\w*|emigruoj\w*", "skubus pardavimas", 1),
     # „ne kopija“, „čekio kopija“ – ne kopijos pozymis
     (r"(?<!\bne )(?<!cekio )(?<!saskaitos )(?<!pirkimo )(?<!dokumentu )(?<!garantinio )"
      r"(?:kopij\w*|replik\w*|replica|clone|klonas)|\bcopy\b(?! of (?:the )?(?:receipt|invoice))|"
      r"ne originalus telefonas", "gali būti kopija", 2),
 ]
+# Itin pigus skelbimas su siais pozymiais atmetamas (finder.Run.extreme_price_verdict).
+STRONG_SCAM_FLAGS = ("gali būti vogtas", "gali būti kopija", "prašo rašyti ne per Vinted",
+                     "mokėjimas ne per Vinted")
+# Tik Vinted'e: kontaktas uz platformos ribu. Pirkpard skelbimuose telefono nr. ir „skambink“ iprasti.
+PLATFORM_CONTACT_FLAGS = ("prašo susisiekti ne per Vinted", "aprašyme telefono nr. / el. paštas")
 _RISK_RE = [(re.compile(r"\b(?:" + p + r")"), label, pts) for p, label, pts in RISK_PATTERNS]
 _PHONE_RE = re.compile(r"(?:\+\s?370|\b8)[\s-]?\(?6\d{2}\)?[\s-]?\d{2}[\s-]?\d{3}\b|\+\d{2,3}[\s-]?\d{3}[\s-]?\d{3}[\s-]?\d{2,4}\b")
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.\w{2,}")

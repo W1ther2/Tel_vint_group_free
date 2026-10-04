@@ -67,6 +67,11 @@ class FakeTelegram:
         self.messages.append(text if chat_id is None else f"[{chat_id}] {text}")
         return True
 
+    def send_admin(self, text, silent=True):
+        """Tarnybines zinutes (klaidos, busena, heartbeat) – i ADMIN_CHAT_ID arba cia pat."""
+        from vinted import config
+        return self.send_message(text, silent=silent, chat_id=config.ADMIN_CHAT_ID or None)
+
     def answer_callback(self, callback_id, text, alert=False):
         self.answers.append(text)
         return True
@@ -170,13 +175,13 @@ class FlowTest(unittest.TestCase):
                      LOW_BATTERY_MIN_DISCOUNT=0.30)
         with TempDir():
             cat = market_items() + [
-                item(1, "iPhone 13 128GB", 173, user_id=1),    # baterija 70%, ~20% pigiau -> atmesta
-                item(2, "iPhone 13 128GB", 140, user_id=2),    # baterija 70%, ~35% pigiau -> praleista
+                item(1, "iPhone 13 128GB", 173, user_id=1),    # baterija 76%, ~20% pigiau -> atmesta
+                item(2, "iPhone 13 128GB", 140, user_id=2),    # baterija 76%, ~35% pigiau -> praleista
                 item(3, "iPhone 13 128GB", 190, user_id=3),    # baterija nenurodyta -> praleista
             ]
             client = FakeClient({"iPhone 13": cat}, pages={
-                "1": "Tvarkingas telefonas, baterija 70%, siunčiu per Vinted",
-                "2": "Tvarkingas telefonas, baterija 70%, siunčiu per Vinted",
+                "1": "Tvarkingas telefonas, baterija 76%, siunčiu per Vinted",
+                "2": "Tvarkingas telefonas, baterija 76%, siunčiu per Vinted",
                 "3": "Tvarkingas telefonas, siunčiu per Vinted",
             })
             tg = FakeTelegram()
@@ -184,7 +189,7 @@ class FlowTest(unittest.TestCase):
             sent = {d["id"]: d for d, _ in tg.deals}
             self.assertEqual(set(sent), {"vinted:2", "vinted:3"}, log)
             self.assertTrue(sent["vinted:2"]["battery_low"])
-            self.assertEqual(sent["vinted:2"]["battery"], 70)
+            self.assertEqual(sent["vinted:2"]["battery"], 76)
             self.assertIsNone(sent["vinted:3"]["battery"])
             self.assertFalse(sent["vinted:3"]["battery_low"])
             self.assertIn("baterija", log)
@@ -380,10 +385,13 @@ class FlowTest(unittest.TestCase):
                 tg = FakeTelegram()
                 run(FakeClient({}), tg)
             self.assertTrue(any("ISPEJIMAS" in m for m in tg.messages))
-            self.assertEqual(read_json("state.json")["fail_streak"], 0)
-            tg = FakeTelegram()
-            run(FakeClient({}), tg)
-            self.assertFalse(any("ISPEJIMAS" in m for m in tg.messages))
+            self.assertEqual(read_json("state.json")["source_zero"]["vinted"], 3)
+            # kartojama ne kas 3 paleidimus (anksciau ~48 kartus per para), o ne dazniau
+            # nei kas SOURCE_ALERT_HOURS
+            for _ in range(3):
+                tg = FakeTelegram()
+                run(FakeClient({}), tg)
+                self.assertFalse(any("ISPEJIMAS" in m for m in tg.messages))
             tg2 = FakeTelegram()
             run(FakeClient({}), tg2)
             self.assertFalse(any("Skriptas veikia" in m for m in tg2.messages))
