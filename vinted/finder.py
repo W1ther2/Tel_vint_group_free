@@ -306,11 +306,14 @@ class Run:
         extreme_price = ((peer_ratio is not None and peer_ratio < c["SUSPICIOUS_REJECT_RATIO"])
                          or (market_ratio is not None and market_ratio < c["HARD_MIN_PRICE_RATIO"]))
         if extreme_price:
-            hard_scam_flags = {
-                "prašo rašyti ne per Vinted", "prašo susisiekti ne per Vinted",
-                "mokėjimas ne per Vinted", "aprašyme telefono nr. / el. paštas",
-                "gali būti vogtas / be dokumentų", "gali būti kopija",
-            }
+            hard_scam_flags = {"gali būti vogtas / be dokumentų", "gali būti kopija"}
+            # Kontaktas/atsiskaitymas uz platformos ribu yra stiprus signalas Vinted'e.
+            # PirkPard skelbimuose telefono numeris ir tiesioginis susitarimas gali buti iprasti.
+            if source.name == "vinted":
+                hard_scam_flags.update({
+                    "prašo rašyti ne per Vinted", "prašo susisiekti ne per Vinted",
+                    "mokėjimas ne per Vinted", "aprašyme telefono nr. / el. paštas",
+                })
             explicit_scam = any(reason in hard_scam_flags or
                                 reason.startswith("daug neigiamų atsiliepimų")
                                 for reason in (risk_reasons or []))
