@@ -10,6 +10,7 @@ import time
 import traceback
 
 from . import archive, config, commands
+from .catalog import brand_of
 from .liquidity import describe as describe_sale_fact
 from .confidence import (LEVELS as CONFIDENCE_LEVELS, PRIOR as CONFIDENCE_PRIOR, assess,
                          pessimistic, progress as confidence_progress)
@@ -315,6 +316,8 @@ class Run:
         deal = {
             "id": uid, "fp": fp, "source": source.name, "source_label": getattr(source, "label", source.name),
             "model": model, "seller_id": seller_id, "storage": storage, "title": title,
+            # Gamintojo raktas – pagal ji parenkama grupes skiltis (TOPIC_BY_BRAND).
+            "brand": getattr(brand_of(model), "key", None),
             "price": price, "url": listing.url, "photo": listing.photo or detail.photo,
             "description": description, "condition": condition, "battery": battery,
             "battery_low": battery_low, "defects": [d for d, _ in defects],

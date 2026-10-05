@@ -179,11 +179,28 @@ class Telegram:
         „config.json sugadintas“ tik gasdina skaitytojus. Nenurodzius – kaip anksciau."""
         return self.send_message(text, silent=silent, chat_id=config.ADMIN_CHAT_ID or None)
 
-    def _thread(self, chat_id):
+    def topic_for(self, brand):
+        """Kurios skilties ID atitinka gamintoja.
+
+        v44 Android buvo atskiras PALEIDIMAS: savas botas, sava busena, savas
+        workflow – nes `CHAT_TOPIC_ID` buvo vienas visam procesui. Nuo v49.2
+        skiltis parenkama pagal gamintoja, tad uztenka vieno boto ir vienos
+        rinkos istorijos (tai net geriau: Apple ir Android kalibracija bendra).
+
+        `TOPIC_BY_BRAND` – {"apple": "12", "samsung": "34"}; ko nera, tas eina
+        i `CHAT_TOPIC_ID`, o jo nenurodzius – i bendra srauta."""
+        if brand:
+            mapped = (config.cfg.get("TOPIC_BY_BRAND") or {}).get(str(brand).lower())
+            if mapped:
+                return str(mapped).strip()
+        return self.topic_id
+
+    def _thread(self, chat_id, brand=None):
         """message_thread_id – tik pagrindiniam pokalbiui. Asmeninėse zinutese skilciu
         nera, ir su svetimu thread ID Telegram atsakytu klaida."""
-        if self.topic_id and str(chat_id) == self.chat_id:
-            return {"message_thread_id": self.topic_id}
+        topic = self.topic_for(brand)
+        if topic and str(chat_id) == self.chat_id:
+            return {"message_thread_id": topic}
         return {}
 
     def safe(self, text):
@@ -228,14 +245,14 @@ class Telegram:
     def _url(self, method):
         return f"https://api.telegram.org/bot{self.token}/{method}"
 
-    def send_message(self, text, silent=False, chat_id=None):
+    def send_message(self, text, silent=False, chat_id=None, brand=None):
         if config.cfg["DRY_RUN"]:
             print("[DRY_RUN] Telegram:", text.replace("\n", " | ")[:200])
             return True
         chat = chat_id or self.chat_id
         try:
             self._throttle(chat)
-            data = {**self._thread(chat),
+            data = {**self._thread(chat, brand),
                     "chat_id": chat, "text": text[:4096], "parse_mode": "HTML",
                     "disable_web_page_preview": True, "disable_notification": silent}
             r = self._post("sendMessage", data, 15)
@@ -262,8 +279,12 @@ class Telegram:
         return json.dumps({"inline_keyboard": rows})
 
     def send_deal(self, deal, silent=False, chat_id=None):
-        """Kortele su nuotrauka ir mygtukais. Jei nuotrauka nesiuncia – tekstu."""
+        """Kortele su nuotrauka ir mygtukais. Jei nuotrauka nesiuncia – tekstu.
+
+        Skiltis parenkama pagal gamintoja (`TOPIC_BY_BRAND`), tad Apple ir Android
+        gali kristi i skirtingas grupes skiltis is to paties paleidimo."""
         caption = format_card(deal)
+        brand = deal.get("brand")
         if config.cfg["DRY_RUN"]:
             print("[DRY_RUN] kortele:", caption.replace("\n", " | ")[:300])
             return True
@@ -272,7 +293,7 @@ class Telegram:
             try:
                 self._throttle(chat_id or self.chat_id)
                 r = self._post("sendPhoto", {
-                    **self._thread(chat_id or self.chat_id),
+                    **self._thread(chat_id or self.chat_id, brand),
                     "chat_id": chat_id or self.chat_id, "photo": deal["photo"], "caption": caption,
                     "parse_mode": "HTML", "reply_markup": keyboard, "disable_notification": silent}, 20)
                 if r.status_code == 200:
@@ -283,7 +304,7 @@ class Telegram:
                 return True
             except Exception as e:
                 print(f"  ! Nepavyko issiusti nuotraukos: {self.safe(e)} – siunciu be nuotraukos")
-        return self.send_message(caption, silent=silent, chat_id=chat_id)
+        return self.send_message(caption, silent=silent, chat_id=chat_id, brand=brand)
 
     def get_updates(self, offset):
         """Naujos komandos ir mygtuku paspaudimai.

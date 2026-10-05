@@ -6,18 +6,88 @@ Apple ID istoriskai yra be gamintojo („13 Pro“), kitu gamintoju – su pavad
 („Galaxy S24 Ultra“). Taip seni duomenys lieka galioti be jokios migracijos, o ID
 vis tiek nesusikerta. Zmogui visada rodom `display()`.
 
-Minimali kaina (`min`) – riba, zemiau kurios beveik visada dezute, dalys ar apgavyste;
-apytiksle naudoto telefono kaina is jos gaunama `min / 0.45` (zr. phone.typical_price).
-Tai tik startinis spejimas: tiksliai kaina nustato pats botas is skelbimu ir pardavimu,
-o rankomis keiciama per /kaina.
+Cia DU ATSKIRI dalykai, kuriuos iki v49.1 atstovavo vienas skaicius:
+
+  MIN_PRICES  APSAUGA. Riba, zemiau kurios beveik visada dezute, dalys ar apgavyste.
+              Keiciama TIK samoningai. NIEKADA neisvedama is rinkos kainos.
+  MEASURED    MATAVIMAS. Kiek modelis realiai vertas, su imtimi ir data.
+
+Kodel atskirta (v49.2). Iki tol apytiksle kaina buvo gaunama `min / 0.45`, tad
+ivedant matavima tekdavo judinti RIBA. Gyvas pavyzdys: Pixel 7 ismatuota mediana
+111 EUR, ir kad `typical` priartetu, riba buvo nuleista 75 -> 55. Vertinimas
+pagerejo (165 -> 120), bet apgavysciu apsauga krito 27 %, o kartu i rinkos
+statistika isileisti tie skelbimai, kuriuos ji turejo atmesti - t. y. matavimas
+pats sau pakenke. Dabar riba lieka 75, o matavimas gyvena `MEASURED` su n=19.
+
+Taip pat is matavimo nebelieka tik komentaro: imtis ir data yra DUOMUO, tad
+`confidence.py` gali pasakyti, kiek tuo skaiciumi pasitiketi, o `dataset.py`
+veliau ji perrasyti ismoktu.
 
 Naujas gamintojas = vienas irasas `BRANDS` sarase: raktas, paieskos fraze, zodziai,
 kurie PRIVALO buti pavadinime, modeliu lentele ir viena regex funkcija.
 """
 
 import re
+from dataclasses import dataclass
 
 from .util import fold
+
+
+@dataclass(frozen=True)
+class Prior:
+    """Ka manom apie modelio verte PRIES pamatydami sio paleidimo skelbimus.
+
+    `samples=0` reiskia spejima is ribos (`min / 0.45`) - toks pat skaicius kaip
+    anksciau, bet dabar aiskiai pazymetas kaip spejimas. `samples>0` reiskia tikra
+    matavima, ir butent si skirtuma iki v49.1 sistema pamesdavo."""
+    price: float
+    samples: int = 0
+    measured: str = ""            # "2026-09-30"
+    method: str = "guess"         # guess | live-median | sold-median | manual
+
+    @property
+    def is_guess(self) -> bool:
+        return self.samples <= 0
+
+
+# --- Matavimai --------------------------------------------------------------
+#: Kada ismatuota. Imtys dideles, bet duomenys sensta - po poros menesiu
+#: perskaiciuoti is naujo (`python -m vinted.dataset`).
+MEASURED_ON = "2026-10-05"
+
+#: {modelis: (mediana EUR, imtis)} - gyvos busenos medianos, be irasu, pazymetu
+#: `x` (uzsienio, kalba, defektai), t. y. is to paties srauto, kuri mato atranka.
+#: Pakeicia `min / 0.45` spejima ten, kur tikri duomenys yra.
+MEASURED = {
+    "8": (52, 177), "8 Plus": (75, 202), "X": (70, 124), "XR": (75, 269), "XS": (81, 163),
+    "XS Max": (111, 118), "11": (88, 814), "11 Pro": (116, 243), "11 Pro Max": (139, 168),
+    "12 mini": (109, 428), "12": (120, 668), "12 Pro": (163, 273), "12 Pro Max": (208, 167),
+    "13 mini": (174, 424), "13": (183, 1417), "13 Pro": (270, 442), "13 Pro Max": (306, 223),
+    "14": (233, 648), "14 Plus": (277, 131), "14 Pro": (348, 578), "14 Pro Max": (393, 274),
+    "15": (348, 611), "15 Plus": (393, 70), "15 Pro": (480, 616), "15 Pro Max": (578, 266),
+    "16e": (372, 53), "16": (508, 291), "16 Plus": (533, 70), "16 Pro": (692, 468),
+    "16 Pro Max": (788, 274), "17": (754, 133), "Air": (698, 23), "17 Pro": (993, 263),
+    "17 Pro Max": (1071, 187),
+}
+
+#: Spejimo daugiklis modeliams BE matavimo: riba / GUESS_RATIO.
+#:
+#: Tai grubus pakaitalas, ir dabar zinom, KIEK grubus. Ismatuotas tikrasis
+#: santykis riba/mediana nera konstanta - jis tolygiai kyla pigejant telefonui:
+#:
+#:     iPhone 17 Pro  mediana  993    santykis 0.38
+#:     iPhone 15 Pro  mediana  480    santykis 0.42
+#:     iPhone 13      mediana  183    santykis 0.49
+#:     iPhone 12      mediana  120    santykis 0.62
+#:     iPhone 11      mediana   88    santykis 0.68
+#:
+#: Ir tai logiska: sudauzytas iPhone 11 dalimis vertas ~2/3 savo kainos, o
+#: sudauzytas 17 Pro - ~1/3. Butent todel vienas daugiklis negali tikti abiem
+#: galams: su 0.45 „11“ buvo pervertintas 53 %, o „17“ nuvertintas 18 %.
+#: Modeliams, kuriems matavimo dar nera, 0.45 lieka kaip vidurkis - bet tai
+#: SPEJIMAS, ir `Prior.samples == 0` tai pasako garsiai.
+GUESS_RATIO = 0.45
+
 
 # --- Apple ------------------------------------------------------------------
 # ID be gamintojo (istoriskai). Atpazinimas – phone.py (_MODEL_RE), nes ten daug
@@ -215,8 +285,28 @@ def display(model):
 
 
 def min_price(model):
+    """APSAUGOS riba. Nepriklauso nuo rinkos kainos ir nuo matavimu."""
     brand = BRAND_OF.get(model)
     return float(brand.prices[model]) if brand else 0.0
+
+
+def prior(model):
+    """Ka manom, kad modelis vertas, PRIES siandienos skelbimus.
+
+    Du sluoksniai, ir skirtumas tarp ju matomas is `Prior.samples`:
+      MEASURED  tikra mediana su imtimi (samples > 0)
+      spejimas  riba / GUESS_RATIO (samples == 0)
+
+    Iki v49.1 abu atvejai grazindavo paprasta skaiciu, tad `confidence.py`
+    negalejo atskirti „183 EUR is 1417 skelbimu" nuo „200 EUR, nes riba 90"."""
+    found = MEASURED.get(model)
+    if found:
+        return Prior(float(found[0]), samples=int(found[1]),
+                     measured=MEASURED_ON, method="live-median")
+    floor = min_price(model)
+    if not floor:
+        return None
+    return Prior(round(floor / GUESS_RATIO / 5) * 5, samples=0, method="guess")
 
 
 def order(brands=None):

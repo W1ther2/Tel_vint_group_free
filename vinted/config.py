@@ -274,6 +274,14 @@ DEFAULTS = {
     "DRY_RUN": False,
     "PAUSED": False,                 # True = skelbimai nesiunciami (Telegram /pauze)
     "DEBUG": False,
+    # Grupes skiltis pagal gamintoja: {"apple": "12", "samsung": "34", ...}.
+    # Tuscia arba nerastas gamintojas -> CHAT_TOPIC_ID, o jo nesant -> bendras srautas.
+    #
+    # v44 Android buvo ATSKIRAS paleidimas (savas botas, sava busena, savas workflow),
+    # nes skiltis buvo viena visam procesui. Nuo v49.2 uztenka cia iraso: vienas botas,
+    # viena rinkos istorija (Apple ir Android kalibracija bendra), o skelbimai krenta
+    # i skirtingas skiltis. Antro bot'o token'o nebereikia.
+    "TOPIC_BY_BRAND": {},
     # Rinkos kainos patikimumas (vinted/confidence.py). Griezta atranka TIK nuolaidos budu:
     # nuolaida skaiciuojama nuo ATSARGIOS vertes = verte x p20(pardavimo / musu kaina) to
     # lygio. „Pigiausiu“ (rank) logika nekeiciama.

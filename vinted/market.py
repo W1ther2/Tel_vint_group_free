@@ -178,7 +178,17 @@ class Market:
             price = l.price
             if not model or price is None or is_accessory(title) or find_defects(title):
                 continue
+            # Zemiau ribos krentancios kainos i rinkos statistika NEITRAUKIAMOS, bet
+            # nuo v49.2 jos UZRASOMOS i archyva su priezastimi, o ne tyliai dingsta.
+            #
+            # Kodel tai svarbu: riba (`min_price`) yra tas pats skaicius, kuri norim
+            # patikrinti matuodami. Kol filtruodavom RASANT, Pixel 7 atveju po 45 EUR
+            # nebelikdavo nieko, tad klausimo „ar 45 buvo teisinga riba" nebuvo kaip
+            # uzduoti – irodymai buvo ismetami prie duru. Dabar filtras taikomas
+            # SKAITANT (`values()`, `peers()` ignoruoja `x`), o archyve lieka viskas.
             if price < max(40, min_price(model)):          # dezutes, dalys, sugede – ne rinkos kaina
+                self._event("skip", l.uid, day, why="below_floor", src=l.source,
+                            m=model, p=round(price, 2), fl=round(min_price(model), 2))
                 continue
             if not condition_ok(l.condition, "Gera"):      # patenkinamos bukles – ne rinkos kaina
                 continue
