@@ -303,7 +303,28 @@ load_error = ""
 
 
 def load(path=CONFIG_FILE):
-    """Ikelia config.json i `cfg` (vietoje). Grazina cfg."""
+    """Ikelia config.json i cfg (vietoje). Grazina cfg."""
+    _load(path)
+    return _dry_run_from_env()
+
+
+def _dry_run_from_env():
+    """DRY_RUN=1 aplinkoje - nieko nesiusti IR neskaityti Telegram komandu.
+
+    Rankiniai / staging paleidimai naudoja ta pati bot'o token'a kaip gyvas Free
+    senderis: getUpdates patvirtintu jo komandas (pastumtu offset'a), ir gyvas
+    botas ju nebegautu. Todel sausas paleidimas komandu neliecia visai.
+
+    Grazinta 2026-10-05: jungiklis dingo per 2026-10-04 atsaukima (db12ac4) kartu
+    su savo testu, tad niekas nepastebejo. Be jo naujos versijos neimanoma
+    patikrinti su gyvu Vinted srautu nieko nesiunciant i grupe."""
+    if os.environ.get("DRY_RUN", "").strip().lower() in ("1", "true", "yes"):
+        cfg["DRY_RUN"] = True
+        cfg["TELEGRAM_COMMANDS"] = False
+    return cfg
+
+
+def _load(path):
     global load_error
     load_error = ""
     cfg.clear()

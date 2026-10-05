@@ -2,7 +2,8 @@ import unittest
 
 from tests.helpers import reset_config
 from vinted.phone import (detect_model, is_accessory, find_defects, extract_storage, extract_battery,
-                          estimate_value, estimate_profit, normalize_model_name, normalize_storage)
+                          estimate_value, estimate_profit, normalize_model_name, normalize_storage,
+                          description_not_phone)
 
 
 class ModelTest(unittest.TestCase):
@@ -22,7 +23,8 @@ class ModelTest(unittest.TestCase):
 
     def test_not_models(self):
         for title in ["Iphone X 6s XR 13 15pro 8plus 7plus 12pro 11", "iPhone 12 13 14", "iPhone 13 / 13 Pro dėklas",
-                      "iPhone 7", "iPhone SE 2020", "iPhone 18 Pro", "Samsung S21", "iPhone 12 / iPhone 13"]:
+                      "iPhone 7", "iPhone SE 2020", "iPhone 18 Pro", "iPhone 12 / iPhone 13",
+                      "Samsung A54", "Redmi Note 13 Pro", "iPhone ar Samsung dėklai"]:
             self.assertIsNone(detect_model(title), title)
 
     def test_single_model_with_numbers(self):
@@ -103,6 +105,19 @@ class DefectTest(unittest.TestCase):
                      "bloknotas dovanų", "lokalus pardavimas", "su blokeliu"]:
             self.assertNotIn("užblokuotas", self.labels(text), text)
 
+    def test_accessory_anywhere_in_title(self):
+        """Gyvas log'as: „Iphone 17 pro case 2€“ buvo skaiciuojamas kaip „per pigus telefonas“."""
+        from vinted.phone import is_accessory
+        for t in ["Iphone 17 pro case", "MagSafe case iPhone 15", "iPhone 13 Pro Max dėklas",
+                  "Apple iPhone 14 Pro silikoninis dekliukas", "iPhone 15 kroviklis",
+                  "iphone 15 pro max clear case magsafe"]:
+            self.assertTrue(is_accessory(t), t)
+        # telefonas su priedu – vis dar telefonas
+        for t in ["iPhone 13 + dėklas", "iPhone 12 su dėkliuku", "iPhone 11, dėklas dovanų",
+                  "iPhone 13 128GB case", "iPhone 12 mini with case", "iPhone 13, stiklas įskilęs",
+                  "iPhone 12 Pro MagSafe", "iPhone 16 Pro Max 256GB", "iPhone XR case free"]:
+            self.assertFalse(is_accessory(t), t)
+
     def test_missing_battery(self):
         for text in ["be akumo", "nėra baterijos", "trūksta akumo", "neturi baterijos",
                      "be dėžutės be akumo", "no battery", "without battery"]:
@@ -134,9 +149,6 @@ class SpecsTest(unittest.TestCase):
         self.assertAlmostEqual(estimate_profit(150, 200, pickup_only=True), 200 - 158.20)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class ICloudNegationTest(unittest.TestCase):
     """Tikras Pirkpard skelbimas: „iCloud paskyra bus atsieta pries pardavima“.
@@ -158,3 +170,71 @@ class ICloudNegationTest(unittest.TestCase):
                       self.blokuojantys("iCloud užraktas, nežinau slaptažodžio"))
         self.assertIn("iCloud užraktas",
                       self.blokuojantys("Telefonas užrakintas, iCloud pririštas prie senos paskyros"))
+
+
+class RealPhrasesTest(unittest.TestCase):
+    """Iprasti skelbimu sakiniai, kuriuos v36 klaidingai atmesdavo (2026-09 kodo perziura).
+    Kiekvienas atvejis – tvarkingas telefonas, kuris nebuvo issiustas."""
+
+    def setUp(self):
+        reset_config()
+
+    def test_tidy_descriptions_have_no_defects(self):
+        for text in ["Telefonas nebuvo taisytas, nebuvo daužtas, nebuvo sulytas", "Niekada nebuvo daužtas",
+                     "Nebuvo remontuotas", "Atrištas nuo iCloud", "Atsietas nuo iCloud, paruoštas naujam savininkui",
+                     "iCloud švarus", "Parduodu, nes reikia pinigų", "Parduodu skubiai, reikia greitai pinigų",
+                     "Defektų neturi", "Apsauginis stikliukas įskilęs, ekranas sveikas",
+                     "Būklė tokia, kaip yra nuotraukose", "Nebuvo keistas ekranas", "iCloud nėra užrakintas",
+                     "Jei reikia, galiu paaiškinti kodėl parduodu"]:
+            self.assertEqual(find_defects(text), [], text)
+
+    def test_real_defects_still_found(self):
+        cases = {
+            "Ekranas įskilęs": "skilęs", "Galinis stiklas įskilęs": "skilęs", "Ekrano stiklas įskilęs": "skilęs",
+            "iCloud užrakintas": "iCloud užraktas", "iCloud užrakintas bus atrištas": "iCloud užraktas",
+            "Svarbu: iCloud užrakintas": "iCloud užraktas", "Svarbu – iCloud prašo slaptažodžio": "užrakintas kodu",
+            "Nežinau PIN kodo": "užrakintas kodu", "Parduodu kaip yra": "netestuotas", "Sold as is": "netestuotas",
+            "Buvo keistas ekranas": "keistas ekranas", "Buvo sulytas": "pažeistas",
+            "Nebuvo naudotas, bet ekranas įskilęs": "skilęs",
+            "Niekada nebuvo taisytas, tačiau ekranas įskilęs": "skilęs",
+            "Telefonas nebuvo taisytas, bet neveikia Face ID": "neveikia Face ID",
+        }
+        for text, label in cases.items():
+            self.assertIn(label, [lbl for lbl, _ in find_defects(text)], text)
+
+    def test_phone_descriptions_are_phones(self):
+        for text in ["Parduodu iPhone 13 telefoną, būklė labai gera", "Apple iPhone 12 telefonas, 128GB",
+                     "Pridedu pirkimo čekio kopiją", "Tik korpuse keli smulkūs įbrėžimai",
+                     "Visada laikytas tik dėkle, būklė ideali", "Tik ekrane vienas nežymus įbrėžimas",
+                     "Telefonas originalus, ne kopija", "Originalus, ne replika", "Daugiau paveiksliukų galiu atsiųsti",
+                     "Parduodu nes turiu 2 telefonus"]:
+            self.assertFalse(description_not_phone(text), text)
+
+    def test_not_phone_descriptions_still_caught(self):
+        for text in ["Parduodu 3 telefonus, kaina už visus", "5 vnt. telefonų lotas", "Parduodamas tik dėklas",
+                     "Tik korpusas, be ekrano", "Parduodu tik ekraną", "Tai replika", "Paveikslas su iPhone",
+                     "Kaina už visas 50€"]:
+            self.assertTrue(description_not_phone(text), text)
+
+    def test_titles(self):
+        for t in ["iPhone 13, korpusas be įbrėžimų", "iPhone 14 Pro originalus, ne kopija", "Baterija 100% iPhone 13",
+                  "iPhone 12 Pro 128GB, ekranas ir korpusas idealūs", "iPhone 15 Pro Max titanium, all parts original"]:
+            self.assertFalse(is_accessory(t), t)
+        for t in ["iPhone 11 korpusas", "iPhone 12 parts only", "iPhone 14 Pro Max kopija",
+                  "iPhone 11 korpusas su kamera", "Baterija iPhone 12"]:
+            self.assertTrue(is_accessory(t), t)
+
+    def test_model_edge_cases(self):
+        self.assertEqual(detect_model("iPhone 17 Air 256GB"), "Air")
+        self.assertIsNone(detect_model("iPhone 128GB juodas"))
+        self.assertIsNone(detect_model("iPhone Xiaomi Samsung ekranų keitimas"))
+        self.assertEqual(detect_model("iPhone XsMax 64GB"), "XS Max")
+
+    def test_battery_in_words(self):
+        self.assertEqual(extract_battery("baterija 89 proc."), 89)
+        self.assertEqual(extract_battery("Baterijos būklė 100 procentų"), 100)
+        self.assertIsNone(extract_battery("procesorius greitas, 90 kadrų"))
+
+
+if __name__ == "__main__":
+    unittest.main()

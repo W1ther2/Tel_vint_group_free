@@ -1,0 +1,48 @@
+name: Testai
+
+# Paleidziama, kai ikeli nauja koda. Nesekme matysi GitHub'e (raudonas X) ir gausi laiska,
+# o botas (check.yml) dirba toliau su tuo, kas ikelta.
+#
+# Grazinta 2026-10-05. Sis workflow dingo 2026-10-04 atsaukimo metu (db12ac4) kartu su
+# 13 testu failu. Keturias dienas niekas testu nepaleido, o ju buvo 17 raudonu – is kuriu
+# 15 net nebuvo tikros klaidos: atsaukimas paliko tests/helpers.py senaji, nesuderinta su
+# nauju kodu. Be sio failo tokia bukle vel liks nepastebeta.
+
+on:
+  push:
+    paths:
+      - "vinted/**"
+      - "tests/**"
+      - "vinted_deal_finder.py"
+      - "requirements.txt"
+      - "config.json"
+      - "config.test.json"
+      - ".github/workflows/tests.yml"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Idiegti bibliotekas
+        run: pip install -r requirements.txt
+
+      # DRY_RUN cia SAMONINGAI nenustatomas: nuo 2026-10-05 jis perraso cfg
+      # (`_dry_run_from_env`), tad kiekvienas `reset_config()` testuose gautu
+      # DRY_RUN=True ir TELEGRAM_COMMANDS=False – 19 testu, tikrinanciu siuntima,
+      # kristu be jokios priezasties. Testai ir taip dirba laikinuose aplankuose.
+      - name: Testai
+        run: python -m unittest discover -s tests -t .

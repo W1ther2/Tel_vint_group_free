@@ -109,12 +109,12 @@ class InflatedMedianTest(unittest.TestCase):
 class FlowTest(unittest.TestCase):
     def setUp(self):
         rank_config(SEARCH_QUERIES=["iPhone 13"], HEARTBEAT_HOURS=0, MIN_SAMPLES=8,
-                    MARKET_PERCENTILE=0.5, MIN_BATTERY=0)
+                    MARKET_PERCENTILE=0.5, MIN_BATTERY=0, MIN_PROFIT_EUR=0)
 
     def test_cheapest_sent_loud_others_silent(self):
         with TempDir():
             katalogas = market_items() + [
-                item(1, "iPhone 13 128GB", 150, user_id=1),   # pigiausias
+                item(1, "iPhone 13 128GB", 205, user_id=1),   # pigiausias (ne itartinai)
                 item(2, "iPhone 13 128GB", 258, user_id=2),   # tarp pigiausiu, bet ne 1-as
                 item(3, "iPhone 13 128GB", 330, user_id=3),   # brangus
             ]

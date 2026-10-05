@@ -21,11 +21,19 @@ def vinted_defaults(**extra):
 
 
 class QueriesTest(unittest.TestCase):
-    def test_browse_uses_single_query(self):
-        vinted_defaults(SEARCH_QUERIES=[f"iPhone {i}" for i in range(34)])
+    def test_browse_uses_one_query_per_brand(self):
+        """Viena paieska gamintojui, o ne 34 atskiros modeliams."""
+        vinted_defaults(SEARCH_QUERIES=[f"iPhone {i}" for i in range(34)], BRANDS=["apple"])
         source = VintedSource(client=FakeClient({}))
         self.assertEqual(source.queries(), ["iphone"])
         self.assertIn("visi modeliai", source.describe("iphone"))
+        config.cfg["BRANDS"] = ["apple", "samsung", "xiaomi"]
+        self.assertEqual(source.queries(), ["iphone", "samsung galaxy", "xiaomi"])
+
+    def test_manual_queries_win_over_brands(self):
+        vinted_defaults(BRANDS=["apple", "samsung"], VINTED_QUERIES=["iphone 15 pro"])
+        source = VintedSource(client=FakeClient({}))
+        self.assertEqual(source.queries(), ["iphone 15 pro"])
 
     def test_keyword_mode_still_available(self):
         reset_config(SEARCH_QUERIES=["iPhone 13", "iPhone 14"])
@@ -102,6 +110,7 @@ class RequestCountTest(unittest.TestCase):
 
     def test_browse_makes_one_search_instead_of_34(self):
         queries = [f"iPhone {i}" for i in range(34)]
+        config.cfg["BRANDS"] = ["apple"]
         with TempDir():
             self.assertEqual(self.run_once(browse=True, queries=queries), 1)
         with TempDir():

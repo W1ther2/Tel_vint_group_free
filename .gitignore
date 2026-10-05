@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.venv/
+# Laikinas ir atsarginis busenos failas (vinted/state.py raso saugiai: .tmp -> os.replace)
+*.tmp
+*.bak

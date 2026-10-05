@@ -50,5 +50,12 @@ class RiskTest(unittest.TestCase):
         self.assertTrue(_PHONE_RE.search("8 612 34 567"))
 
 
+    def test_copy_only_when_really_a_copy(self):
+        def reasons(desc):
+            return assess_risk("iPhone 13", desc, 250, 290, {"rating": 4.9, "reviews": 20, "sold": 30})[1]
+        self.assertIn("gali būti kopija", reasons("Tai kopija, bet veikia gerai ir greitai"))
+        for desc in ["Telefonas originalus, ne kopija, viskas veikia", "Pridedu pirkimo čekio kopiją ir dėžutę"]:
+            self.assertNotIn("gali būti kopija", reasons(desc), desc)
+
 if __name__ == "__main__":
     unittest.main()

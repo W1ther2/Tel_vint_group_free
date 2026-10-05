@@ -171,5 +171,78 @@ class TelegramTest(unittest.TestCase):
         self.assertEqual([b["callback_data"] for b in rows[1]], ["w|13 Pro"])
 
 
+
+class TelegramRobustnessTest(unittest.TestCase):
+    """2026-09: ilga kortele nebepjauna HTML, 429 kartojamas, sugadintas HTML – paprastu tekstu."""
+
+    def setUp(self):
+        reset_config(SOURCES=["vinted", "pirkpard"], SHOW_RANK=True)
+
+    def long_deal(self, desc_words=60):
+        from vinted.market import Quote, Rank
+        from vinted.risk import assess_risk
+        desc = " ".join(["Parduodu skubiai, rašykite WhatsApp +37061234567, galima pavedimu."] * 4)
+        desc = " ".join(desc.split()[:desc_words])
+        seller = {"country": "LT", "city": "Klaipėda", "rating": 3.5, "reviews": 4, "sold": 0, "negative": 2,
+                  "account_age_days": 5, "active_items": 60}
+        level, reasons = assess_risk("iPhone 13 Pro Max", desc, 330, 700, seller, 1)
+        return {"model": "13 Pro Max", "storage": "256 GB", "price": 330.0, "drop_from": 380.0, "discount": 0.48,
+                "value": 640.0, "profit": 300, "description": desc, "risk_level": level, "risk_reasons": reasons,
+                "quote": Quote(700, 25, "skelbimai", True), "defects": ["įbrėžimai"], "condition": "Labai gera",
+                "battery": 84, "seller": seller, "age": "prieš 3 min.", "source_label": "Vinted",
+                "url": "https://www.vinted.lt/items/7123456789-apple-iphone-13-pro-max-256gb-sierra-blue-idealios",
+                "rank": Rank(1, 20, 330, 900, 0.0, True, 520), "suspicious": {"ratio": 0.63, "peer_low": 520}}
+
+    def test_long_card_fits_without_breaking_html(self):
+        import re
+        from vinted.telegram import format_card
+        for n in range(1, 50, 3):
+            card = format_card(self.long_deal(n))
+            self.assertLessEqual(len(card), 1024)
+            for tag in ("b", "a", "i", "code"):
+                self.assertEqual(len(re.findall(f"<{tag}[ >]", card)), card.count(f"</{tag}>"), (n, card[-80:]))
+            self.assertNotRegex(card, r"<[^>]*$")
+
+    def test_parse_error_resent_as_plain_text(self):
+        calls = []
+
+        class Http:
+            def post(self, url, data=None, timeout=None):
+                calls.append(dict(data))
+                if "parse_mode" in data:
+                    return Resp(400, text='{"description":"Bad Request: can\'t parse entities"}')
+                return Resp(200)
+
+        ok = quiet(Telegram("t", "42", Http(), sleep=lambda s: None).send_message, "<b>Sveiki</b> &amp; <a href=")
+        self.assertTrue(ok)
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn("parse_mode", calls[1])
+        self.assertNotIn("<b>", calls[1]["text"])
+
+    def test_429_waits_and_retries(self):
+        slept, answers = [], [Resp(429, {"ok": False, "parameters": {"retry_after": 7}}), Resp(200)]
+
+        class Http:
+            def post(self, url, data=None, timeout=None):
+                return answers.pop(0)
+
+        ok = quiet(Telegram("t", "42", Http(), sleep=slept.append).send_message, "labas")
+        self.assertTrue(ok)
+        self.assertEqual(slept, [7.5])
+
+    def test_group_messages_spaced_out(self):
+        slept, clock = [], [100.0]
+        http = FakeHttp()
+        tg = Telegram("t", "-100123", http, sleep=slept.append, clock=lambda: clock[0])
+        tg.send_message("vienas")
+        clock[0] += 1.0
+        tg.send_message("du")
+        self.assertEqual(len(slept), 1)
+        self.assertAlmostEqual(slept[0], 2.1)
+        private = Telegram("t", "42", FakeHttp(), sleep=slept.append, clock=lambda: clock[0])
+        private.send_message("a")
+        private.send_message("b")
+        self.assertEqual(len(slept), 1)                    # asmeniniams – be pauziu
+
 if __name__ == "__main__":
     unittest.main()
