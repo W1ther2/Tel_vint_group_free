@@ -160,18 +160,27 @@ class Market:
         patvirtintu pardavimu mediana kaina, uz kuria niekas nepirko.
 
         Grazinam juos i „active": rezervacija nera nei pardavimas, nei dingimas,
-        o skelbimas tuo metu tebebuvo gyvas."""
+        o skelbimas tuo metu tebebuvo gyvas.
+
+        PATS FAKTAS NEMETAMAS. Pirma sio valymo versija kartu su `rs` istrindavo ir
+        rezervacijos diena – t. y. „taisydama" klaidinga isvada sunaikindavo teisinga
+        stebejima. Dabar diena perkeliama i `rv` (zr. set_status): klaidinga lieka tik
+        isvada, o pati rezervacija issaugoma kaip atskiras laikinas signalas."""
         if config.cfg.get("RESERVED_AS_SOLD"):
             return
         healed = 0
         for e in self.items.values():
             if e.pop("rs", None):
+                # `sd` buvo rezervacijos diena – ja ir issaugom, o ne ismetam.
+                day = e.pop("sd", None)
+                if day is not None and "rv" not in e:
+                    e["rv"] = day
                 e.pop("sv", None)
-                e.pop("sd", None)
                 e["st"] = "active"
                 healed += 1
         if healed:
-            print(f"Isvalyta pardavimu, kurie buvo tik rezervacijos: {healed}")
+            print(f"Rezervaciju, klaidingai laikytu pardavimais: {healed} "
+                  f"(faktas issaugotas kaip 'rv', is kainu statistikos isimtas)")
 
     @locked
     def to_dict(self):
@@ -303,9 +312,10 @@ class Market:
                 e["st"] = "active"
                 e.pop("sd", None)
                 # Ir patvirtinima: skelbimas, vel atsiradęs kataloge, nebuvo parduotas.
-                # Svarbu nuo v50, kai „rezervuota" laikoma patvirtintu pardavimu –
-                # isirusi rezervacija kitaip liktu amzinai kaip `sv=1` ir maitintu
-                # kalibracija kaina, uz kuria niekas nepirko.
+                # Be sito atsaukta rezervacija ar laikinai dinges skelbimas liktu
+                # amzinai kaip `sv=1` ir maitintu kalibracija kaina, uz kuria niekas
+                # nepirko. `rv` (kada buvo rezervuotas) NETRINAMAS – tai atskiras
+                # faktas, o ne isvada apie pardavima.
                 e.pop("sv", None)
                 e.pop("rs", None)
         return drops
@@ -443,6 +453,12 @@ class Market:
         # susidomejo". Jungiklis paliktas, jei kada atsirastu irodymu, kad
         # rezervacijos virsta pardavimais pakankamai patikimai.
         reserved_sold = status == "reserved" and config.cfg["RESERVED_AS_SOLD"]
+        if status == "reserved":
+            # Rezervacija uzrasoma VISADA, bet atskirame lauke: "rv" = kada paskutini
+            # karta matyta rezervuota. Tai faktas ("kazkas susidomejo"), kurio neverta
+            # mesti vien todel, kad jis nera pardavimas. I jokia kainu statistika
+            # "rv" neieina – ieina tik "sv", tad suklysti nera kaip.
+            e["rv"] = day
         if status == "sold" or reserved_sold or (status == "gone" and config.cfg["GONE_AS_SOLD"]):
             e["st"], e["sd"] = "sold", day
             # "sv" = ar tikrai parduotas (puslapis taip sako), ar tik dingo (galejo buti istrintas).
