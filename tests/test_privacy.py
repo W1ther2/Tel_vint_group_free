@@ -24,10 +24,10 @@ from vinted.state import State
 class SellerKeyTest(unittest.TestCase):
     def test_real_id_never_appears_in_state(self):
         s = State()
-        s.remember_seller("vinted:6157710734", "LT", day=100)
+        s.remember_seller("vinted:4242424242", "LT", day=100)
         blob = repr(s.sellers)
-        self.assertNotIn("6157710734", blob)
-        self.assertEqual(s.seller_country("vinted:6157710734"), "LT")
+        self.assertNotIn("4242424242", blob)
+        self.assertEqual(s.seller_country("vinted:4242424242"), "LT")
 
     def test_lookup_still_works_after_reload(self):
         """Maisos kodas stabilus – antras paleidimas salį randa be uzklausos."""
@@ -102,9 +102,9 @@ class AdminIdsTest(unittest.TestCase):
 
     def test_env_supplies_the_real_ids(self):
         config.cfg["ADMIN_IDS"] = []
-        os.environ["ADMIN_IDS"] = "6157710734"
+        os.environ["ADMIN_IDS"] = "4242424242"
         config._admins_from_env()
-        self.assertEqual(config.cfg["ADMIN_IDS"], ["6157710734"])
+        self.assertEqual(config.cfg["ADMIN_IDS"], ["4242424242"])
 
     def test_env_accepts_several(self):
         os.environ["ADMIN_IDS"] = "111, 222;333"
@@ -120,9 +120,9 @@ class AdminIdsTest(unittest.TestCase):
 
     def test_setup_message_points_to_secrets_not_config(self):
         from vinted.commands import admin_setup_message
-        msg = admin_setup_message(6157710734)
+        msg = admin_setup_message(4242424242)
         self.assertIn("Secrets", msg)
-        self.assertIn("6157710734", msg)       # savo ID vartotojas turi pamatyti
+        self.assertIn("4242424242", msg)       # savo ID vartotojas turi pamatyti
         self.assertNotIn("pakeisk į", msg)     # senas patarimas redaguoti config.json
 
 

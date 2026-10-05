@@ -255,7 +255,7 @@ class FlowTest(unittest.TestCase):
         from vinted.config import load
         with TempDir():
             with open("config.json", "w", encoding="utf-8") as f:
-                f.write('{\n  "ADMIN_IDS": [6157710734]\n  "PAGES": 2\n}')     # truksta kablelio
+                f.write('{\n  "ADMIN_IDS": [4242424242]\n  "PAGES": 2\n}')     # truksta kablelio
             load("config.json")
             self.assertIn("line 3", config.load_error)
             config.cfg.update(SEARCH_QUERIES=["iPhone 13"], HEARTBEAT_HOURS=0,
