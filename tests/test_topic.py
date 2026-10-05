@@ -152,24 +152,16 @@ class CommandScopeTest(unittest.TestCase):
         self.assertEqual([m["text"] for m in messages], ["/pauze", "/testi", "/statistika"])
 
 
-@unittest.skipUnless((__import__("pathlib").Path(__file__).resolve().parent.parent / "config.android.json").exists(),
-                     "config.android.json nera (pvz. Tel_vint_group_free – tik iPhone)")
-class AndroidConfigTest(unittest.TestCase):
-    """Antrojo paleidimo konfigas turi buti tvarkingas ir tikrai kitokio turinio."""
-
-    def test_config_android_json(self):
-        from pathlib import Path
-        from vinted import config
-        path = Path(__file__).resolve().parent.parent / "config.android.json"
-        with open(path, encoding="utf-8") as f:
-            cfg = json.load(f)
-        self.assertEqual([k for k in cfg if k not in config.DEFAULTS], [])
-        self.assertNotIn("apple", cfg["BRANDS"])
-        self.assertIn("samsung", cfg["BRANDS"])
-        with open(path.parent / "config.json", encoding="utf-8") as f:
-            main = json.load(f)
-        self.assertEqual(main["BRANDS"], ["apple"])
-
+# AndroidConfigTest isimtas v50. Jis tikrino `config.android.json` – antrojo,
+# atskirai paleidziamo boto konfiga. To budo nebera: Android skelbimai dabar eina
+# per TA PATI paleidima i kita grupes skilti (TOPIC_BY_BRAND, zr. test_topics.py).
+# Failo nebuvo, tad klase buvo visiskai praleidziama – ir tylėdama tvirtino
+# `BRANDS == ["apple"]`, nors ju dabar penki. Praleidziamas testas, saugantis
+# neteisinga tiesa, yra blogiau nei jokio testo.
+#
+# Vienas jo testas buvo vertingas ir tikrino gyva koda, tad liko – tik nebe uz
+# praleidimo salygos (del jos jis irgi niekada nebuvo paleistas).
+class BrandQueriesTest(unittest.TestCase):
     def test_brands_shape_queries(self):
         from vinted import config
         reset_config(BRANDS=["samsung", "xiaomi", "google", "oneplus"])

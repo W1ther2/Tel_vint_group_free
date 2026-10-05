@@ -4,3 +4,12 @@ __pycache__/
 # Laikinas ir atsarginis busenos failas (vinted/state.py raso saugiai: .tmp -> os.replace)
 *.tmp
 *.bak
+
+# Gyva busena. Jos vieta – `busena` saka (ja perraso check.yml), o ne `main`.
+# Kol sie failai buvo sekami, kiekvienas paleidimas darydavo commita: 1819
+# commitu ir ~2 MB vien dabartineje versijoje. Dar svarbiau – state.json yra
+# pardaveju ir vartotoju duomenys, tad kiekvienas tu commitu juos amzinai
+# ideda i viesa `main` istorija. Nuo v50 jie nebesekami (zr. tests/test_repo.py).
+seen.json
+state.json
+archive/

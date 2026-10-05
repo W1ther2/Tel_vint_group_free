@@ -16,7 +16,6 @@ on:
       - "vinted_deal_finder.py"
       - "requirements.txt"
       - "config.json"
-      - "config.test.json"
       - ".github/workflows/tests.yml"
   pull_request:
   workflow_dispatch:
