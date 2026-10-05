@@ -565,11 +565,16 @@ class Run:
             if reply:
                 print(f"Komanda ({m['name']}): {m['text'][:50]}")
                 self.tg.send_message(reply)
-        elif not config.cfg.get("ADMIN_IDS") and not told_setup:
+        elif not commands.admin_ids() and not told_setup:
             # Administratorius dar nenustatytas – anksciau komanda buvo tyliai ignoruojama,
             # ir savininkas nesuprasdavo, kodel botas neatsako. Pasakom, ka daryti
             # (ir jo paties ID – tai nieko neatskleidzia apie kitus).
-            print(f"Komanda neivykdyta – ADMIN_IDS tuscias ({m['name']}, ID {m['user']}): {m['text'][:40]}")
+            #
+            # Tikrinam admin_ids(), o ne tik cfg["ADMIN_IDS"]: administratorius gali
+            # buti zinomas is ADMIN_CHAT_ID, ir tada siulyti ka nors nustatyti butu
+            # klaidinga – komandos jam veikia.
+            print(f"Komanda neivykdyta – administratorius nenustatytas "
+                  f"({m['name']}, ID {m['user']}): {m['text'][:40]}")
             self.tg.send_message(commands.admin_setup_message(m["user"]))
             return True
         else:

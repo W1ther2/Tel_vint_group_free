@@ -118,6 +118,69 @@ class AdminIdsTest(unittest.TestCase):
         config._admins_from_env()
         self.assertEqual(config.cfg["ADMIN_IDS"], ["999"])
 
+    def test_admin_chat_owner_is_an_admin(self):
+        """Paprasciausias budas, kuriam nereikia NIEKO nustatyti papildomai.
+
+        ADMIN_CHAT jau nurodytas (i ji eina tarnybines zinutes), o Telegram'e
+        privataus pokalbio ID yra to vartotojo ID. Vadinasi tas, kuriam eina
+        klaidos, ir yra administratorius."""
+        from vinted import commands
+        config.cfg["ADMIN_IDS"] = []
+        before = config.ADMIN_CHAT_ID
+        try:
+            config.ADMIN_CHAT_ID = "4242424242"
+            self.assertTrue(commands.is_admin("4242424242"))
+            self.assertFalse(commands.is_admin("999"))
+        finally:
+            config.ADMIN_CHAT_ID = before
+
+    def test_group_id_never_grants_admin(self):
+        """Riba, be kurios tai butu skyle: grupes ID (su minusu) nera zmogus.
+        Prilyginus ji vartotojui komandas vykdytu bet kuris grupes narys."""
+        from vinted import commands
+        config.cfg["ADMIN_IDS"] = []
+        before = config.ADMIN_CHAT_ID
+        try:
+            config.ADMIN_CHAT_ID = "-1001234567890"
+            self.assertFalse(commands.is_admin("-1001234567890"))
+            self.assertEqual(commands.admin_ids(), [])
+        finally:
+            config.ADMIN_CHAT_ID = before
+
+    def test_explicit_admin_ids_still_work(self):
+        from vinted import commands
+        config.cfg["ADMIN_IDS"] = ["777"]
+        before = config.ADMIN_CHAT_ID
+        try:
+            config.ADMIN_CHAT_ID = ""
+            self.assertTrue(commands.is_admin("777"))
+        finally:
+            config.ADMIN_CHAT_ID = before
+
+    def test_both_sources_combine_without_duplicates(self):
+        from vinted import commands
+        config.cfg["ADMIN_IDS"] = ["777"]
+        before = config.ADMIN_CHAT_ID
+        try:
+            config.ADMIN_CHAT_ID = "777"
+            self.assertEqual(commands.admin_ids(), ["777"])
+            config.ADMIN_CHAT_ID = "888"
+            self.assertEqual(sorted(commands.admin_ids()), ["777", "888"])
+        finally:
+            config.ADMIN_CHAT_ID = before
+
+    def test_nothing_configured_means_nobody(self):
+        """Tuscia = niekas. Komandos grupeje ignoruojamos, o ne atviros visiems."""
+        from vinted import commands
+        config.cfg["ADMIN_IDS"] = []
+        before = config.ADMIN_CHAT_ID
+        try:
+            config.ADMIN_CHAT_ID = ""
+            self.assertEqual(commands.admin_ids(), [])
+            self.assertFalse(commands.is_admin("777"))
+        finally:
+            config.ADMIN_CHAT_ID = before
+
     def test_setup_message_points_to_secrets_not_config(self):
         from vinted.commands import admin_setup_message
         msg = admin_setup_message(4242424242)

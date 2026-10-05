@@ -227,9 +227,25 @@ def _accuracy_text(state):
     return "\n".join(lines)
 
 
+def admin_ids():
+    """Kas gali keisti nustatymus komandomis.
+
+    Be ADMIN_IDS cia priimamas ir ADMIN_CHAT_ID: tai asmeninio pokalbio su botu
+    ID, o Telegram'e privataus pokalbio ID yra to vartotojo ID. Vadinasi tas,
+    kuriam jau eina tarnybines zinutes, ir yra administratorius – atskirai to
+    nurodyti nebereikia, o jo ID nelieka sekamame config.json.
+
+    Grupes ar kanalo ID (su minusu) NEPRIIMAMAS: tai ne zmogus, ir prilyginus
+    ji vartotojui komandas galetu vykdyti bet kuris grupes narys."""
+    ids = [str(x) for x in (config.cfg.get("ADMIN_IDS") or [])]
+    chat = str(config.ADMIN_CHAT_ID or "").strip()
+    if chat and not chat.startswith("-") and chat not in ids:
+        ids.append(chat)
+    return ids
+
+
 def is_admin(user_id):
-    admins = [str(x) for x in (config.cfg.get("ADMIN_IDS") or [])]
-    return str(user_id) in admins
+    return str(user_id) in admin_ids()
 
 
 def admin_setup_message(user_id):
