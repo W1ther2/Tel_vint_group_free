@@ -26,7 +26,7 @@ from .sources.vinted_source import VintedSource
 from .state import State, load_seen, save_seen
 from .telegram import Telegram
 from .tracker import report_text
-from .util import human_age
+from .util import human_age, money
 
 
 class Run:
@@ -43,6 +43,10 @@ class Run:
         self.last_error = ""
         self.deadline = None        # kada baigti si saltini (kad kitiems liktu laiko)
         self.source_stats = {}      # {saltinis: {"fetched", "error", "crash"}} – siam paleidimui
+        # {saltinis: {"fetched", "new", "sent", "rejects": {priezastis: n}}} – zr.
+        # print_diagnostics. Atskirai nuo source_stats: tas reikalingas saltinio
+        # sveikatai (ar veikia), sis – klausimui „kodel nieko neatejo".
+        self.diag = {}
         self.step_errors = []       # papildomi darbai, kurie nuluzo (pranesama kas valanda)
         self.statuses = {}          # {uid: busena} – tam paciam skelbimui neuzklausiam du kartus
         self.limit_announced = False  # ar jau parasem, kad pasiekta MAX_ALERTS_PER_RUN riba
@@ -67,6 +71,17 @@ class Run:
     def examples(self, value):
         self._local.examples = value
 
+    def diag_of(self, name=None):
+        """Sio saltinio skaitikliai. Kviesti su self.lock.
+
+        Saltinio vardas imamas is gijos (saltiniai gali suktis lygiagreciai, tad
+        perdavineti ji per kiekviena reject() butu reikeje keisti ~20 vietu)."""
+        name = name or getattr(self._local, "source_name", "") or "?"
+        d = self.diag.get(name)
+        if d is None:
+            d = self.diag[name] = {"fetched": 0, "new": 0, "sent": 0, "rejects": {}}
+        return d
+
     def reject_bad(self, uid, code, reason, example=None):
         """Atmetam IR isimam is rinkos palyginimo: uzrakintas, sugedes, ne telefonas ar
         uzsienio skelbimas neturi nei stumti tvarkingu telefonu vietos, nei keisti rinkos kainos."""
@@ -76,6 +91,8 @@ class Run:
     def reject(self, reason, example=None):
         with self.lock:
             self.totals[reason] = self.totals.get(reason, 0) + 1
+            by_source = self.diag_of()["rejects"]
+            by_source[reason] = by_source.get(reason, 0) + 1
         if example and len(self.examples) < 5:
             self.examples.append(f"{reason}: {example}")
 
@@ -111,6 +128,7 @@ class Run:
         if not model or is_accessory(title) or price is None:
             with self.lock:
                 self.new_count += 0 if drop_from else 1
+                self.diag_of()["new"] += 0 if drop_from else 1
             self.new_seen[uid] = time.time()
             return self.reject("ne telefonas / kitas modelis")
         if not model_wanted(model):
@@ -129,6 +147,7 @@ class Run:
         if not drop_from:
             with self.lock:
                 self.new_count += 1
+                self.diag_of()["new"] += 1
         # Nuo sios kainos skaiciuosim kita atpigima (ir laipsniska: 300 -> 290 -> 280)
         self.state.market.mark_evaluated(uid, price)
         cat_condition = listing.condition
@@ -152,16 +171,16 @@ class Run:
             if rank.share > c["RANK_TOP_PCT"]:
                 self.new_seen[uid] = time.time()
                 return self.reject("ne tarp pigiausių",
-                                   f"{display(model)} {price:.0f}€ – {rank.place}-as iš {rank.n} "
-                                   f"({rank.low:.0f}–{rank.high:.0f}€)")
+                                   f"{display(model)} {money(price)} – {rank.place}-as iš {rank.n} "
+                                   f"({money(rank.low)}–{money(rank.high)})")
             # Gerokai pigesnis uz kita pigiausia tokį pat telefona – beveik visada kazkas
             # negerai (pvz. „iPhone 14 uzbluokuotas be akumo“ uz 130 €, kai kiti nuo 200 €).
             ratio = self.suspicious_ratio(rank, price)
             if ratio is not None and ratio < c["SUSPICIOUS_REJECT_RATIO"]:
                 self.new_seen[uid] = time.time()
                 return self.reject_bad(uid, "itartinai", "įtartinai pigu",
-                                   f"{display(model)} {price:.0f}€ – kitas pigiausias {rank.peer_low:.0f}€ "
-                                   f"({1 - ratio:.0%} pigiau)")
+                                   f"{display(model)} {money(price)} – kitas pigiausias "
+                                   f"{money(rank.peer_low)} ({1 - ratio:.0%} pigiau)")
         else:
             best_case = quote.price * CONDITION_FACTOR.get(cat_condition, 1.08) * 1.03
             if price > best_case * (1 - c["MIN_DISCOUNT"]):
@@ -173,7 +192,8 @@ class Run:
         if price < floor:
             self.new_seen[uid] = time.time()
             return self.reject("per pigu (sugedęs / dalims / ne telefonas?)",
-                               f"{title[:40]} {price:.0f}€ (riba {floor:.0f}€, rinka {quote.price:.0f}€)")
+                               f"{title[:40]} {money(price)} (riba {money(floor)}, "
+                               f"rinka {money(quote.price)})")
         self.new_seen[uid] = time.time()
         if c["PAUSED"]:
             # Pauze tikrinam PRIES skelbimo puslapi: kainu istorija toliau kaupiasi
@@ -911,6 +931,11 @@ class Run:
         galiojo tik lygiagreciam rezimui). Rezultatas irasomas i source_stats – pagal ji
         pranesama, kai saltinis neveikia."""
         fetched, crash = 0, ""
+        # Kuriam saltiniui priskirti skaitiklius – zr. diag_of. Lygiagreciame
+        # rezime kiekvienas saltinis sukasi savo gijoje, tad reiksme ju nemaiso.
+        self._local.source_name = source.name
+        with self.lock:
+            self.diag_of(source.name)        # irasas atsiranda net jei viskas luzo
         try:
             fetched = self._scan(source, seen, pages)
         except Exception as e:
@@ -958,6 +983,8 @@ class Run:
             listings = source.search(q, pages, seen)
             self.last_error = source.last_error or self.last_error
             fetched += len(listings)
+            with self.lock:
+                self.diag_of(source.name)["fetched"] += len(listings)
             self.mark_foreign(listings)
             # Salis butina zinoti PRIES observe(): uzsienio kainos neturi patekti
             # nei i Lietuvos rinkos kaina, nei i „pigiausiu“ palyginima.
@@ -997,6 +1024,7 @@ class Run:
                               f"{deal['price']:.0f} EUR – bandysiu kitame paleidime")
                         continue
                     self.alerts.append(deal)
+                    self.diag_of(source.name)["sent"] += 1
                     self.state.market.mark_alerted(deal["id"], deal["price"])
                     if c["TRACK_RESULTS"]:
                         self.state.tracker.add(deal)
@@ -1017,6 +1045,52 @@ class Run:
             self.sleep(c["SLEEP_SECONDS"])
         source.finish(self)
         return fetched
+
+    def print_diagnostics(self):
+        """Kodel sis paleidimas baigesi butent taip – pagal saltini.
+
+        Trys visiskai skirtingos situacijos log'e atrodydavo vienodai, nes
+        suvestine maisydavo visus saltinius i viena krūva:
+
+          saltinis sulūzo    gauta 0, yra klaida -> taisyti kliento koda ar IP
+          filtrai atmeta     gauta daug, issiusta 0 -> ziureti, KURI priezastis
+          nieko naujo nebuvo gauta daug, nauju 0  -> viskas gerai, nieko nedaryti
+
+        Pirma ir trecia tylejo vienodai. Butent del to 2026-10-05 „61 % be
+        salies" buvo palaikyta badejimu, nors is tiesu filtras veike teisingai.
+        Grazina teksta (ir ji atspausdina), kad ta pati suvestine tiktu ir
+        heartbeat zinutei."""
+        lines = []
+        for source in self.sources:
+            d = self.diag.get(source.name)
+            if d is None:
+                continue                      # siame paleidime netikrintas
+            rejects = sorted(d["rejects"].items(), key=lambda kv: -kv[1])
+            top = ", ".join(f"{why} {n}" for why, n in rejects[:4])
+            if len(rejects) > 4:
+                top += f", kita {sum(n for _, n in rejects[4:])}"
+            lines.append(f"  {source.label}: gauta {d['fetched']}, naujų {d['new']}, "
+                         f"išsiųsta {d['sent']}")
+            if top:
+                lines.append(f"      atmesta – {top}")
+            why = (self.source_stats.get(source.name) or {}).get("error")
+            if why:
+                lines.append(f"      ! {why[:120]}")
+            elif d["fetched"] == 0:
+                lines.append("      ! negauta nė vieno skelbimo, bet klaidos nėra – "
+                             "gali būti pasikeitęs atsakymo formatas")
+            elif d["new"] == 0:
+                lines.append("      (naujų nebuvo – tai normalu, ne gedimas)")
+        errors = getattr(self.tg, "errors", None) or {}
+        tg_line = f"  Telegram: išsiųsta {getattr(self.tg, 'sent', 0)}"
+        if errors:
+            tg_line += ", klaidos – " + ", ".join(f"{k} {n}" for k, n in sorted(errors.items()))
+        else:
+            tg_line += ", klaidų nėra"
+        lines.append(tg_line)
+        text = "DIAGNOSTIKA\n" + "\n".join(lines)
+        print(text)
+        return text
 
     def scan_all(self, seen, pages):
         """Perziuri visus saltinius. Lygiagreciai (jie eina i skirtingus serverius,
@@ -1089,6 +1163,7 @@ class Run:
             self.step("Rinkos kainos", self.print_market)
             summary = ", ".join(f"{k}: {n}" for k, n in sorted(self.totals.items(), key=lambda kv: -kv[1]))
             print(f"IS VISO: gauta {fetched}, tinkama {len(self.alerts)}. Atmesta – {summary}")
+            self.step("Diagnostika", self.print_diagnostics)
             requests_made = self.step("Uzklausu statistika", self.request_report) or {}
             self.step("Greicio ribos mokymasis", self.learn_rate_limit)
             self.step("Pranesimu ribos pranesimas", self.report_alert_limit)
@@ -1096,7 +1171,12 @@ class Run:
             self.state.last_run = {"time": int(time.time()), "fetched": fetched, "new": self.new_count,
                                    "sent": len(self.alerts), "totals": self.totals,
                                    "requests": requests_made,
-                                   "sources": {k: v["fetched"] for k, v in self.source_stats.items()}}
+                                   "sources": {k: v["fetched"] for k, v in self.source_stats.items()},
+                                   # Pagal saltini – kad kito paleidimo metu butu su kuo palyginti
+                                   # („vakar vinted atmesdavo 380 kaip jau matytus, siandien 0")
+                                   "diag": self.diag,
+                                   "telegram": {"sent": getattr(self.tg, "sent", 0),
+                                                "errors": getattr(self.tg, "errors", None) or {}}}
             if fetched == 0:
                 # Ispejimai siunciami kiekvienam saltiniui atskirai (update_source_health)
                 self.state.fail_streak += 1

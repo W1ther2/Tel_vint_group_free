@@ -171,6 +171,11 @@ class Telegram:
         self.sleep = sleep
         self.clock = clock
         self._last_sent = {}
+        # Siuntimo apskaita siam paleidimui (zr. note_error). Be jos „0 pranesimu"
+        # log'e atrodo vienodai ir tada, kai nebuvo ka siusti, ir tada, kai
+        # Telegram atmete kiekviena zinute – o reaguoti i tai reikia priesingai.
+        self.sent = 0
+        self.errors = {}
 
     def send_admin(self, text, silent=True):
         """Tarnybine zinute (klaidos, saltiniu busena, heartbeat).
@@ -202,6 +207,17 @@ class Telegram:
         if topic and str(chat_id) == self.chat_id:
             return {"message_thread_id": topic}
         return {}
+
+    def note_error(self, kind, detail=""):
+        """Suskaiciuoja IR parodo Telegram klaida.
+
+        Anksciau kiekviena tokia vieta tik spausdino. Log'e tai matosi, bet i
+        paleidimo suvestine nepatekdavo, tad siuntimo sutrikimas atrodydavo
+        lygiai kaip „siandien nebuvo gero pasiulymo". Dabar klaidos
+        skaiciuojamos pagal rusi ir parodomos suvestineje (zr.
+        finder.print_diagnostics)."""
+        self.errors[kind] = self.errors.get(kind, 0) + 1
+        print(f"  ! Telegram {kind}" + (f": {self.safe(detail)}" if detail else ""))
 
     def safe(self, text):
         """Pasleps bot'o token'a. `requests` klaidos tekste yra VISAS adresas, o jame –
@@ -238,7 +254,7 @@ class Telegram:
             if getattr(r, "status_code", 200) != 429:
                 return r
             wait = _retry_after(r)
-            print(f"  ! Telegram 429 (per daug zinuciu) – laukiu {wait:.0f}s")
+            self.note_error("429 (per daug zinuciu)", f"laukiu {wait:.0f}s")
             self.sleep(wait)
         return r
 
@@ -258,16 +274,18 @@ class Telegram:
             r = self._post("sendMessage", data, 15)
             if r.status_code == 400 and "parse" in (r.text or "").lower():
                 # Sugadintas HTML – siunciam paprastu tekstu, kad zinute nedingtu
-                print(f"  ! Telegram neperskaite HTML ({self.safe(r.text[:100])}) – siunciu paprastu tekstu")
+                self.note_error("neperskaite HTML",
+                                f"{r.text[:100]} – siunciu paprastu tekstu")
                 data = {k: v for k, v in data.items() if k != "parse_mode"}
                 data["text"] = plain_text(text)[:4096]
                 r = self._post("sendMessage", data, 15)
             if r.status_code != 200:
-                print(f"  ! Telegram klaida: {self.safe(r.text[:150])}")
+                self.note_error(f"atmete ({r.status_code})", r.text[:150])
                 return False
+            self.sent += 1
             return True
         except Exception as e:
-            print(f"  ! Nepavyko issiusti Telegram: {self.safe(e)}")
+            self.note_error("nepasiekiamas", e)
             return False
 
     @staticmethod
@@ -297,13 +315,18 @@ class Telegram:
                     "chat_id": chat_id or self.chat_id, "photo": deal["photo"], "caption": caption,
                     "parse_mode": "HTML", "reply_markup": keyboard, "disable_notification": silent}, 20)
                 if r.status_code == 200:
+                    self.sent += 1
                     return True
-                print(f"  ! Telegram nuotraukos klaida: {self.safe(r.text[:150])} – siunciu be nuotraukos")
+                self.note_error("nuotraukos klaida",
+                                f"{r.text[:150]} – siunciu be nuotraukos")
             except requests.Timeout:
-                print("  ! Telegram neatsake laiku – antra karta nesiunciu, kad nebutu dublikato")
+                # Grazinam True tycia: zinute galejo nueiti, o antras bandymas
+                # duotu dublikata grupeje. Bet klaida vis tiek uzskaitom.
+                self.note_error("neatsake laiku",
+                                "antra karta nesiunciu, kad nebutu dublikato")
                 return True
             except Exception as e:
-                print(f"  ! Nepavyko issiusti nuotraukos: {self.safe(e)} – siunciu be nuotraukos")
+                self.note_error("nuotraukos klaida", f"{self.safe(e)} – siunciu be nuotraukos")
         return self.send_message(caption, silent=silent, chat_id=chat_id, brand=brand)
 
     def get_updates(self, offset):
@@ -318,11 +341,11 @@ class Telegram:
                 "allowed_updates": json.dumps(["message", "callback_query"])}, timeout=15)
             data = r.json()
         except Exception as e:
-            print(f"  ! Nepavyko gauti Telegram komandu: {self.safe(e)}")
+            self.note_error("komandu negauta", e)
             return [], [], offset
         if not isinstance(data, dict) or not data.get("ok"):
             why = data.get("description") if isinstance(data, dict) else f"netiketas atsakymas: {type(data).__name__}"
-            print(f"  ! Telegram getUpdates: {self.safe(str(why)[:150])}")
+            self.note_error("komandu negauta", str(why)[:150])
             return [], [], offset
 
         messages, callbacks, new_offset = [], [], offset
@@ -358,5 +381,5 @@ class Telegram:
                 "callback_query_id": callback_id, "text": text[:200], "show_alert": alert}, timeout=15)
             return True
         except Exception as e:
-            print(f"  ! Nepavyko atsakyti i paspaudima: {self.safe(e)}")
+            self.note_error("neatsake i paspaudima", e)
             return False

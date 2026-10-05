@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import math
 import re
 import time
 import unicodedata
@@ -44,6 +45,25 @@ def human_age(timestamp, now=None):
     if days < 31:
         return f"prieš {days} d."
     return f"prieš {days // 30} mėn."
+
+
+def money(value):
+    """Kaina log'o eilutei. Absurdiskai dideles sutrumpinamos.
+
+    `f"{p:.0f}€"` su sugedusia reiksme duoda „99999999€" ir isstumia is eilutes
+    tai, del ko ji apskritai rasoma – pavadinima, modeli, riba. Diagnostikai
+    svarbu, KAD kaina absurdiska, o ne kiek tiksliai joje nuliu."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return "?"
+    if not math.isfinite(v):
+        return "?"                      # NaN / begalybe – zr. parsing._to_float
+    if abs(v) >= 1_000_000:
+        return f"{v / 1_000_000:.1f} mln. €"
+    if abs(v) >= 10_000:
+        return f"{v / 1000:.0f} tūkst. €"
+    return f"{v:.0f}€"
 
 
 def median(values):

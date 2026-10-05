@@ -53,18 +53,34 @@ class FakeClient:
 
 
 class FakeTelegram:
-    def __init__(self, updates=None, callbacks=None, private=None):
+    def __init__(self, updates=None, callbacks=None, private=None, fail_sends=False):
         self.deals, self.messages, self.answers = [], [], []
         self.updates = updates or []            # [(update_id, tekstas)] – grupeje
         self.callbacks = callbacks or []        # [(update_id, data, user, name)]
         self.private = private or []            # [(update_id, tekstas, user, chat, name)]
+        # Kaip tikrame Telegram kliente (zr. telegram.Telegram.note_error) –
+        # diagnostika skaito butent sias dvi reiksmes.
+        self.sent = 0
+        self.errors = {}
+        self.fail_sends = fail_sends            # siuntimas luzta – diagnostikai patikrinti
+
+    def note_error(self, kind, detail=""):
+        self.errors[kind] = self.errors.get(kind, 0) + 1
 
     def send_deal(self, deal, silent=False, chat_id=None):
+        if self.fail_sends:
+            self.note_error("atmete (403)")
+            return False
         self.deals.append((deal, silent) if chat_id is None else (deal, chat_id))
+        self.sent += 1
         return True
 
     def send_message(self, text, silent=False, chat_id=None):
+        if self.fail_sends:
+            self.note_error("atmete (403)")
+            return False
         self.messages.append(text if chat_id is None else f"[{chat_id}] {text}")
+        self.sent += 1
         return True
 
     def send_admin(self, text, silent=True):
