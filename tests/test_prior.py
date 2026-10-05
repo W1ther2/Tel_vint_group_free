@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""v49.2: APSAUGOS riba atskirta nuo KAINOS prioro.
+"""v50: APSAUGOS riba atskirta nuo KAINOS prioro.
 
 Iki v49.1 `typical_price` buvo isvedamas is ribos (`min / 0.45`), tad vienas
 skaicius dirbo du priesingus darbus. Sie testai saugo, kad jie nebesusilietu
@@ -72,7 +72,7 @@ class FloorVsPriorTest(unittest.TestCase):
 
 
 class SkipIsRecordedTest(unittest.TestCase):
-    """v49.2: po ribos krentancios kainos nebedingsta tyliai.
+    """v50: po ribos krentancios kainos nebedingsta tyliai.
 
     Kol filtruodavom RASANT, klausimo „ar riba teisinga" nebuvo kaip uzduoti -
     irodymai buvo ismetami prie duru."""

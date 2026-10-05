@@ -250,7 +250,7 @@ DEFAULT_MIN_PRICES = {model: price for brand in catalog.BRANDS
 def typical_price(model):
     """Apytiksle iprasta tvarkingo naudoto telefono kaina.
 
-    Nuo v49.2 imama is `catalog.prior()`, o ne isvedama is ribos. Praktinis
+    Nuo v50 imama is `catalog.prior()`, o ne isvedama is ribos. Praktinis
     skirtumas: kainos patikslinimas nebejudina apgavysciu ribos, o riba
     nebeiskreipia kainos. Zr. catalog.GUESS_RATIO komentara - tikrasis
     santykis riba/mediana svyruoja 0.37..0.68, tad vienu daugikliu jo

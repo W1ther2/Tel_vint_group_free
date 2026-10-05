@@ -183,7 +183,7 @@ class Telegram:
         """Kurios skilties ID atitinka gamintoja.
 
         v44 Android buvo atskiras PALEIDIMAS: savas botas, sava busena, savas
-        workflow – nes `CHAT_TOPIC_ID` buvo vienas visam procesui. Nuo v49.2
+        workflow – nes `CHAT_TOPIC_ID` buvo vienas visam procesui. Nuo v50
         skiltis parenkama pagal gamintoja, tad uztenka vieno boto ir vienos
         rinkos istorijos (tai net geriau: Apple ir Android kalibracija bendra).
 

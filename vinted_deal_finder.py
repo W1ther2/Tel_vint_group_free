@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Telefonu deal finder v49.
+Telefonu deal finder v50.
 
 Iesko telefonu, kurie pigesni uz rinkos kaina (ivertinus bukle, baterija ir defektus),
 ir siuncia juos i Telegram. Gamintojai ijungiami config.json rakte "BRANDS"

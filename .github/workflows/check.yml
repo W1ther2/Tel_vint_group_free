@@ -19,7 +19,7 @@ permissions:
 jobs:
   run:
     # Kodo leidimo push suaktyvina paleidima; busenos commitai – ne.
-    if: github.event_name != 'push' || contains(github.event.head_commit.message, 'RELEASE v49.1-free')
+    if: github.event_name != 'push' || contains(github.event.head_commit.message, 'RELEASE v50-free')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -51,7 +51,7 @@ jobs:
           fi
           ls -l seen.json state.json 2>/dev/null || true
 
-      - name: Paleisti v49.1
+      - name: Paleisti v50
         env:
           BOT_TOKEN: ${{ secrets.BOT }}
           CHAT_ID: ${{ secrets.TEL }}

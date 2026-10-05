@@ -12,7 +12,7 @@ Cia DU ATSKIRI dalykai, kuriuos iki v49.1 atstovavo vienas skaicius:
               Keiciama TIK samoningai. NIEKADA neisvedama is rinkos kainos.
   MEASURED    MATAVIMAS. Kiek modelis realiai vertas, su imtimi ir data.
 
-Kodel atskirta (v49.2). Iki tol apytiksle kaina buvo gaunama `min / 0.45`, tad
+Kodel atskirta (v50). Iki tol apytiksle kaina buvo gaunama `min / 0.45`, tad
 ivedant matavima tekdavo judinti RIBA. Gyvas pavyzdys: Pixel 7 ismatuota mediana
 111 EUR, ir kad `typical` priartetu, riba buvo nuleista 75 -> 55. Vertinimas
 pagerejo (165 -> 120), bet apgavysciu apsauga krito 27 %, o kartu i rinkos

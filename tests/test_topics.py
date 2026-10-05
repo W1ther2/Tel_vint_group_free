@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""v49.2: skiltis parenkama pagal gamintoja.
+"""v50: skiltis parenkama pagal gamintoja.
 
 Iki tol Android reiske ATSKIRA paleidima - savas botas, sava busena, savas
 workflow - tik todel, kad `CHAT_TOPIC_ID` buvo vienas visam procesui. Tai

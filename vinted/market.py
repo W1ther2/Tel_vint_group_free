@@ -179,7 +179,7 @@ class Market:
             if not model or price is None or is_accessory(title) or find_defects(title):
                 continue
             # Zemiau ribos krentancios kainos i rinkos statistika NEITRAUKIAMOS, bet
-            # nuo v49.2 jos UZRASOMOS i archyva su priezastimi, o ne tyliai dingsta.
+            # nuo v50 jos UZRASOMOS i archyva su priezastimi, o ne tyliai dingsta.
             #
             # Kodel tai svarbu: riba (`min_price`) yra tas pats skaicius, kuri norim
             # patikrinti matuodami. Kol filtruodavom RASANT, Pixel 7 atveju po 45 EUR
