@@ -58,6 +58,11 @@ jobs:
           # Palikta pasirenkama, bet nenaudojama, jei grupėje nėra forumo temos.
           CHAT_TOPIC_ID: ${{ secrets.TOPIC_IPHONE }}
           ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT }}
+          # Kas gali keisti nustatymus komandomis. Butinai is Secrets, o ne is
+          # config.json: tas failas sekamas vieso repozitoriumo git istorijoje,
+          # is kurios Telegram ID nebeistrinsi. Jei sio Secret nera, komandos
+          # grupeje nebeveiks, o botas pats pasakys, kaip ji pridėti.
+          ADMIN_IDS: ${{ secrets.ADMIN_IDS }}
         run: python vinted_deal_finder.py
 
       - name: Issaugoti busena
