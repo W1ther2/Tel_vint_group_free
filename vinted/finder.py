@@ -753,6 +753,29 @@ class Run:
               f"gautu salies patikra")
         self.sleep(wait)
 
+    @staticmethod
+    def _country_queue(todo, backfill, budget):
+        """Kuria tvarka leisti salies uzklausas: nauji PIRMI, bet dalis rezervuojama
+        laukiantiems.
+
+        Iki v50 cia buvo paprastas `todo + backfill`, ir tai veike tol, kol nauju
+        skelbimu buvo keliolika. Prijungus Android nauju atsirado simtais, tad
+        laukianciuju eile nustojo judeti visai: gyvai matuota 2026-10-05 – is 100
+        Android irasu 61 (61 %) stovejo „salis?" busenoje, o Apple, kurio pardaveju
+        1146 jau atmintyje, – tik 2 %. Tie 61 nedalyvavo nei rinkos kainoje, nei
+        „pigiausiu" palyginime, t. y. duomenys kaupesi, bet nesiskaiciavo.
+
+        Rezervas nedidelis (COUNTRY_BACKFILL_SHARE), nes nauji skelbimai gali buti
+        dealai SIANDIEN, o laukiantys tik papildo statistika. Bet rezervas butinas:
+        be jo badavimas yra ne laikinas, o nuolatinis."""
+        if budget <= 0:
+            return list(todo) + list(backfill)
+        share = float(config.cfg.get("COUNTRY_BACKFILL_SHARE") or 0)
+        reserve = min(len(backfill), int(budget * share)) if share > 0 else 0
+        first = max(0, budget - reserve)
+        return list(todo[:first]) + list(backfill[:reserve]) + list(todo[first:]) \
+            + list(backfill[reserve:])
+
     def country_share(self, source, limit, queries_left):
         """Kiek salies uzklausu tenka siai paieskai: likutis, padalytas is likusiu paiesku.
 
@@ -839,7 +862,7 @@ class Run:
         todo.sort(key=cents_last)
         backfill.sort(key=cents_last)
         self.wait_out_cooldown(source, bool(todo), queries_left)
-        for listing in todo + backfill:
+        for listing in self._country_queue(todo, backfill, budget):
             if budget == 0 or source.country_lookups_blocked or self.out_of_time():
                 with self.lock:
                     self.country_limited.add(source.name)   # laikina: kitas paleidimas patikrins

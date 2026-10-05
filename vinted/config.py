@@ -274,6 +274,11 @@ DEFAULTS = {
     "DRY_RUN": False,
     "PAUSED": False,                 # True = skelbimai nesiunciami (Telegram /pauze)
     "DEBUG": False,
+    # Kokia salies uzklausu dalis rezervuojama JAU MATYTIEMS, bet dar nepatikrintiems
+    # skelbimams. 0 = kaip iki v50 (nauji visada pirmi, laukiantys gauna tik likuti).
+    # Zr. Run._country_queue – be rezervo laukianciuju eile nustoja judeti visai,
+    # kai nauju srautas nuolatinis.
+    "COUNTRY_BACKFILL_SHARE": 0.30,
     # Grupes skiltis pagal gamintoja: {"apple": "12", "samsung": "34", ...}.
     # Tuscia arba nerastas gamintojas -> CHAT_TOPIC_ID, o jo nesant -> bendras srautas.
     #
