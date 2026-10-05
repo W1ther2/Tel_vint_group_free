@@ -64,6 +64,19 @@ def sale_factor_assumption():
     return float(config.cfg["ASKING_SALE_FACTOR"])
 
 
+def price_ceiling(model):
+    """Didziausia kaina, kuri dar gali reiksti VIENA si telefona.
+
+    Skaiciuojama nuo modelio prioro (catalog.prior), ne nuo ribos, tad ji seka
+    matavimus: patikslinus kaina, riba pasislenka kartu. 0 arba None reiskia,
+    kad virsutines ribos nera (prioro neturim)."""
+    ratio = float(config.cfg.get("MAX_PRICE_RATIO") or 0)
+    if ratio <= 0:
+        return None
+    p = typical_price(model)
+    return p * ratio if p else None
+
+
 def spread_of(values):
     """Sklaida = standartinis nuokrypis / mediana (None, kai reiksmiu maziau nei 3)."""
     if len(values) < 3:
@@ -135,6 +148,30 @@ class Market:
         # Ilgalaikio archyvo ivykiai siame paleidime (zr. vinted/archive.py). I state.json
         # nerasomi – paleidimo gale perkeliami i archyva.
         self.events = []
+        self._undo_reserved_sales()
+
+    def _undo_reserved_sales(self):
+        """Vienkartinis valymas: isima „pardavimus", kurie buvo tik rezervacijos.
+
+        2026-10-05 trumpam galiojo RESERVED_AS_SOLD=True su klaidinga prielaida,
+        kad rezervacija reiskia apmoketa pirkima (Vinted pagalba sako kitaip –
+        zr. config.RESERVED_AS_SOLD). Tie irasai pazymeti `rs=1`, tad atpazistami
+        tiksliai. Isjungus jungikli jie butu like amzinai kaip `sv=1` ir maitine
+        patvirtintu pardavimu mediana kaina, uz kuria niekas nepirko.
+
+        Grazinam juos i „active": rezervacija nera nei pardavimas, nei dingimas,
+        o skelbimas tuo metu tebebuvo gyvas."""
+        if config.cfg.get("RESERVED_AS_SOLD"):
+            return
+        healed = 0
+        for e in self.items.values():
+            if e.pop("rs", None):
+                e.pop("sv", None)
+                e.pop("sd", None)
+                e["st"] = "active"
+                healed += 1
+        if healed:
+            print(f"Isvalyta pardavimu, kurie buvo tik rezervacijos: {healed}")
 
     @locked
     def to_dict(self):
@@ -189,6 +226,16 @@ class Market:
             if price < max(40, min_price(model)):          # dezutes, dalys, sugede – ne rinkos kaina
                 self._event("skip", l.uid, day, why="below_floor", src=l.source,
                             m=model, p=round(price, 2), fl=round(min_price(model), 2))
+                continue
+            ceiling = price_ceiling(model)
+            if ceiling and price > ceiling:
+                # Virsutine riba. Apatine riba saugo nuo dalimis parduodamu telefonu,
+                # bet iki v50 virsutines nebuvo visai, tad lotas („5 telefonai"),
+                # netiksliai atpazintas modelis ar saltinio klaida patekdavo i rinkos
+                # istorija ir tempdavo mediana auksyn. Gyvai matyta: OnePlus 11 uz
+                # 899 EUR, kai to modelio kaina ~165.
+                self._event("skip", l.uid, day, why="above_ceiling", src=l.source,
+                            m=model, p=round(price, 2), fl=round(ceiling, 2))
                 continue
             if not condition_ok(l.condition, "Gera"):      # patenkinamos bukles – ne rinkos kaina
                 continue
@@ -379,19 +426,22 @@ class Market:
             e.pop("sd", None)
             e.pop("sv", None)
             return
-        # „Rezervuota" = Vinted vienintelis realus pardavimo signalas (v50).
+        # „Rezervuota" NERA pardavimas, ir numatytai juo nelaikoma.
         #
-        # Ismatuota 2026-10-05 is archyvo: per 19 dienu Vinted NE KARTO nepasake
-        # „parduota" (0 is 2318 „sold" irasu buvo patvirtinti) – parduota skelbima
-        # jis tiesiog istrina, ir mes gaunam 404 = „dingo". Uz tai 8 kartus pasake
-        # „rezervuota", o tai Vinted reiskia, kad pirkejas jau sumokejo.
+        # Vinted pagalba (vinted.lt/help/59): rezervacija yra pardavejo pazadas
+        # palaikyti daikta nariui, kuris PLANUOJA ji isigyti; galioja 5 dienas ir
+        # bet kada atsaukiama. Mokejimo joje nera.
         #
-        # Paskutine prasoma kaina rezervacijos momentu IR YRA uzsidarymo kaina –
-        # butent to reikia confidence.ask_quote. Tai net geresnis irodymas uz
-        # puslapi, tikrinama po keliu dienu: pagaunam pardavimo akimirka.
+        # Trumpam (2026-10-05) cia buvo priesinga prielaida – esą rezervacija
+        # reiskia apmoketa pirkima. Ji neteisinga, o kaina butu patekusi tiesiai
+        # i PATVIRTINTU pardavimu mediana ir i kalibracija, t. y. i pacia
+        # svarbiausia produkto dali. Geriau neturėti duomenu, nei turėti tokius,
+        # kurie gali reiksti nieko.
         #
-        # Rizika: rezervacija gali isirti. Tada skelbimas vel pasirodo kataloge,
-        # ir observe() nuima „sold" kartu su `sv`/`rs` (zr. ten).
+        # Signalas neprarandamas: rezervacija patenka i archyva (`status` ivykis)
+        # ir i pranesimu rezultatus (`tracker`), kur ji reiskia „kazkas
+        # susidomejo". Jungiklis paliktas, jei kada atsirastu irodymu, kad
+        # rezervacijos virsta pardavimais pakankamai patikimai.
         reserved_sold = status == "reserved" and config.cfg["RESERVED_AS_SOLD"]
         if status == "sold" or reserved_sold or (status == "gone" and config.cfg["GONE_AS_SOLD"]):
             e["st"], e["sd"] = "sold", day

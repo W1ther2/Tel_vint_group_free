@@ -12,6 +12,7 @@ import unittest
 
 from tests.helpers import reset_config, TempDir, item
 from tests.test_flow import FakeClient, FakeTelegram, run
+from vinted.state import State
 
 
 def read_json(path):
@@ -102,7 +103,10 @@ class LookupBudgetTest(unittest.TestCase):
             run(client, FakeTelegram())
             first = len(set(client.user_requests))
             self.assertEqual(first, 1, client.user_requests)         # 10 skelbimu, 1 pardavejas
-            self.assertEqual(read_json("state.json")["sellers"]["vinted:42"][0], "LT")
+            # Raktas – maisos kodas: tikras pardavejo ID i viesa `busena` saka nebegula.
+            saved = read_json("state.json")["sellers"]
+            self.assertNotIn("vinted:42", saved, "ID neturi buti issaugotas atviru tekstu")
+            self.assertEqual(saved[State.seller_key("vinted:42")][0], "LT")
             client.user_requests.clear()
             client.catalog["iPhone 13"] = cat + [item(300, "iPhone 13 128GB", 250, user_id=42)]
             run(client, FakeTelegram())

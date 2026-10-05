@@ -2,6 +2,7 @@
 """Duomenu istraukimas is Vinted atsakymu ir skelbimo puslapio."""
 
 import html
+import math
 import re
 from datetime import datetime, timezone
 
@@ -33,12 +34,20 @@ def json_value(page, key):
 
 # --- Kaina, nuotraukos ------------------------------------------------------
 def _to_float(v):
+    """Skaicius arba None. NaN ir begalybe atmetamos kaip „nera kainos".
+
+    Butina, nes `float("nan")` ir `float("inf")` yra TEISETI (o "1e400"
+    virsta begalybe), tad is saltinio atejusi tokia reiksme prasisukdavo iki
+    rinkos istorijos. Blogiausia NaN: kiekvienas jo palyginimas yra False,
+    tad jis praeina net `price < 40` patikra, o viena tokia reiksme paverčia
+    viso modelio mediana NaN - tyliai, be jokios klaidos."""
     if v is None:
         return None
     try:
-        return float(str(v).replace(",", ".").replace("€", "").replace("\u00a0", "").replace(" ", ""))
+        f = float(str(v).replace(",", ".").replace("€", "").replace("\u00a0", "").replace(" ", ""))
     except (TypeError, ValueError):
         return None
+    return f if math.isfinite(f) else None
 
 
 def get_price(item):

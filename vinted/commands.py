@@ -233,13 +233,19 @@ def is_admin(user_id):
 
 
 def admin_setup_message(user_id):
-    """Atsakymas, kai grupeje parasyta komanda, bet ADMIN_IDS dar tuscias."""
+    """Atsakymas, kai grupeje parasyta komanda, bet ADMIN_IDS dar tuscias.
+
+    Anksciau cia buvo rasoma „pakeisk config.json“. Tai buvo bloga patarimas:
+    config.json sekamas vieso repozitoriumo git istorijoje, tad iraseta Telegram
+    ID lieka joje amzinai – net ir veliau isemus. Todel siunciam i Secrets."""
     uid = user_id if str(user_id).isdigit() else "123456789"
     return ("⚙️ <b>Komandos dar neįjungtos</b> – nenurodytas administratorius.\n"
             f"Tavo Telegram ID: <code>{uid}</code>\n\n"
-            f"GitHub'e atidaryk <code>config.json</code>, surask eilutę "
-            f"<code>\"ADMIN_IDS\": []</code> ir pakeisk į <code>\"ADMIN_IDS\": [{uid}]</code>, "
-            f"tada Commit. Po to komandą parašyk dar kartą.")
+            "GitHub'e: <b>Settings → Secrets and variables → Actions → New repository secret</b>, "
+            f"vardas <code>ADMIN_IDS</code>, reikšmė <code>{uid}</code>.\n"
+            "<i>Į config.json jo nerašyk – tas failas viešas ir iš jo git istorijos "
+            "ID nebeištrinsi.</i>\n"
+            "Po to komandą parašyk dar kartą.")
 
 
 def handle_callback(cb, state):

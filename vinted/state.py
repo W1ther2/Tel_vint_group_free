@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Busena tarp paleidimu: seen.json (matyti skelbimai) ir state.json (visa kita)."""
 
+import hashlib
 import json
 import os
 import time
@@ -132,6 +133,7 @@ class State:
         # pardavejo paskyrai. Kesas reiskia, kad tas pats pardavejas su 20 skelbimu
         # kainuoja viena uzklausa, o ne 20.
         self.sellers = data.get("sellers") or {}
+        self._migrate_seller_keys()
         # {saltinis: {"per_minute": 31.5, "updated": ts, "hits": kiek 429 buvo}} – issimokta
         # uzklausu greicio riba. GitHub Actions runner'iu IP bendri, tad tikroji riba kinta:
         # zr. finder.Run.learn_rate_limit (po 429 mazinam, po tyliu paleidimu grazinam).
@@ -139,16 +141,44 @@ class State:
 
     SELLER_MAX_ENTRIES = 20000
 
+    @staticmethod
+    def seller_key(key):
+        """Pardavejo raktas – maisos kodas, ne pats ID.
+
+        Kesui reikia tik atpazinti TA PATI pardaveja, o ne zinoti, kas jis. Tad
+        saugom `sha1(raktas)`, kaip jau daroma rinkos istorijoje (`sh`). Taip
+        is busenos, kuri GitHub'e gula i viesa `busena` saka, dingsta 1200+
+        tikru Vinted vartotoju ID. Paieska veikia taip pat: ieskodami
+        perskaiciuojam ta pati maisos koda."""
+        return hashlib.sha1(str(key).encode()).hexdigest()[:16]
+
+    def _migrate_seller_keys(self):
+        """Seni irasai buvo raktuoti tikru ID – perrasom i maisos kodus.
+
+        Be sito perejimas butu kainaves visa kesa (1285 irasai) ir sukeles
+        uzklausu banga: salis butu atsistacius, bet per ~11 paleidimu."""
+        out, moved = {}, 0
+        for k, v in self.sellers.items():
+            if len(str(k)) == 16 and all(ch in "0123456789abcdef" for ch in str(k)):
+                out[k] = v                      # jau maisos kodas
+            else:
+                out[self.seller_key(k)] = v
+                moved += 1
+        if moved:
+            print(f"Pardaveju kesas: {moved} raktu perrasyta i maisos kodus")
+        self.sellers = out
+
     def seller_country(self, key):
         """Isimtas pardavejo salies kodas arba None."""
-        e = self.sellers.get(str(key))
+        e = self.sellers.get(self.seller_key(key))
         if isinstance(e, (list, tuple)) and e:
             return e[0] or None
         return e or None if isinstance(e, str) else None
 
     def remember_seller(self, key, country, day=None):
         if key and country:
-            self.sellers[str(key)] = [str(country), int(day if day is not None else time.time() // 86400)]
+            self.sellers[self.seller_key(key)] = [
+                str(country), int(day if day is not None else time.time() // 86400)]
 
     def note_detail_failure(self, uid, now=None):
         """Dar vienas nepavykes skelbimo atidarymas. Grazina, kiek kartu is viso."""
@@ -176,9 +206,15 @@ class State:
         return state
 
     def user(self, user_id, name=""):
+        """Vartotojo irasas. VARDAS NESAUGOMAS.
+
+        Jis buvo rasomas, bet niekur neskaitomas – gryna asmens duomenu ekspozicija
+        be jokios funkcijos. Svarbu todel, kad busena GitHub'e gula i vieša `busena`
+        saka. Privataus pokalbio ID be jo isversti neimanoma (be jo nera kur siusti),
+        tad jis lieka – ir butent del to DM funkcijos neverta plesti, kol busena
+        nepersikele i serveri."""
         u = self.users.setdefault(str(user_id), {"watch": [], "hide": []})
-        if name:
-            u["name"] = name
+        u.pop("name", None)            # isvalom ir senus irasus
         u.setdefault("watch", [])
         u.setdefault("hide", [])
         return u

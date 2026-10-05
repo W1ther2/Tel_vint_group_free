@@ -194,7 +194,11 @@ DEFAULTS = {
     "TELEGRAM_COMMANDS": True,       # leisti keisti nustatymus komandomis Telegram'e
     # Kas gali keisti nustatymus. Tuscia = niekas (komandos grupeje ignoruojamos).
     # Savo ID suzinosi parases botui privaciai /start.
-    "ADMIN_IDS": [6157710734],
+    # Kas gali keisti nustatymus komandomis. TUSCIA – administratoriaus ID yra
+    # asmens duomuo, o config.json sekamas vieso repozitoriumo git istorijoje,
+    # is kurios jo nebeistrinsi. Nurodomas per aplinkos kintamaji ADMIN_IDS
+    # (per kablelį), GitHub'e – is Secrets. Zr. `_admins_from_env`.
+    "ADMIN_IDS": [],
     "HEARTBEAT_HOURS": 24,
     "FAIL_ALERT_RUNS": 3,            # po kiek nesekmingu paleidimu is eiles pranesti apie problema
     "SOURCE_ALERT_HOURS": 12,        # kaip daznai pranesti apie blokuojama saltini (0 = kas karta)
@@ -274,16 +278,37 @@ DEFAULTS = {
     "DRY_RUN": False,
     "PAUSED": False,                 # True = skelbimai nesiunciami (Telegram /pauze)
     "DEBUG": False,
-    # Ar „rezervuota" laikyti PATVIRTINTU pardavimu (v50).
+    # Virsutine kainos riba rinkos statistikai: kiek kartu virs modelio prioro
+    # kaina dar gali reiksti VIENA si telefona. 0 = ribos nera.
     #
-    # Ismatuota 2026-10-05: per 19 dienu Vinted nedave NE VIENO „parduota" –
-    # is 2318 jo „sold" irasu patvirtintu buvo 0 (visi keturi patvirtinimai,
-    # ant kuriu stovi confidence.PRIOR, atejo is Pirkpard). Uz tai „rezervuota"
-    # jis pranesa, o tai reiskia, kad pirkejas sumokejo.
+    # Apatine riba (min_price) buvo nuo pat pradziu, virsutines – ne, tad lotas
+    # („parduodu 5 telefonus"), netiksliai atpazintas modelis ar saltinio klaida
+    # patekdavo i istorija ir tempdavo mediana auksyn. Gyvai matyta: OnePlus 11
+    # uz 899 EUR, kai to modelio kaina ~165 (santykis 5.4).
     #
-    # false = kaip iki v50: rezervacija keiciа tik `tracked` baigti, o rinkos
-    # kaina ir kalibracija jos nemato.
-    "RESERVED_AS_SOLD": True,
+    # 4 pasirinkta tycia dosniai: nauji, dar neatidaryti telefonai realiai buna
+    # 2-3 kartus brangesni uz naudotu mediana, o atmesti tikra skelbima butu
+    # blogiau nei praleisti viena isskirti (ja dar nugludina `trimmed`).
+    # Atmetimai rasomi i archyva (`skip` / `above_ceiling`), tad riba veliau
+    # galima patikslinti pagal duomenis, o ne pagal nuojauta.
+    "MAX_PRICE_RATIO": 4.0,
+    # Ar „rezervuota" laikyti PATVIRTINTU pardavimu. NUMATYTA: NE.
+    #
+    # v50 trumpam buvo true su prielaida, kad rezervacija reiskia apmoketa
+    # pirkima. Prielaida KLAIDINGA. Vinted pagalba (vinted.lt/help/59):
+    #
+    #   „Jei narys PLANUOJA isigyti viena is tavo prekiu ir praso tavęs ja
+    #    palaikyti, gali ja rezervuoti tam pirkejui. Rezervacija galioja
+    #    5 dienas. BET KADA per si laikotarpi gali atsaukti rezervacija."
+    #
+    # T. y. tai pardavejo pazadas palaikyti daikta, be mokejimo ir atsaukiamas.
+    # Ideti ji i patvirtintus pardavimus reikstu uzteršti pačia svarbiausia
+    # produkto dali – kainu statistika – signalu, kuris gali reiksti nieko.
+    #
+    # Rezervacija lieka stebima atskirai: i archyva (`status` ivykis) ir i
+    # pranesimu rezultatus (`tracker`), kur ji reiskia „kazkas susidomejo".
+    # I rinkos kainas ir kalibracija patenka TIK tikras pardavimo patvirtinimas.
+    "RESERVED_AS_SOLD": False,
     # Kokia salies uzklausu dalis rezervuojama JAU MATYTIEMS, bet dar nepatikrintiems
     # skelbimams. 0 = kaip iki v50 (nauji visada pirmi, laukiantys gauna tik likuti).
     # Zr. Run._country_queue – be rezervo laukianciuju eile nustoja judeti visai,
@@ -328,7 +353,27 @@ load_error = ""
 def load(path=CONFIG_FILE):
     """Ikelia config.json i cfg (vietoje). Grazina cfg."""
     _load(path)
+    _admins_from_env()
     return _dry_run_from_env()
+
+
+def _admins_from_env():
+    """ADMIN_IDS is aplinkos: "123456789" arba "123,456".
+
+    Administratoriaus Telegram ID yra asmens duomuo, o config.json sekamas
+    vieso repozitoriumo git istorijoje – is jos jo nebeistrinsi net pakeitus
+    faila. Todel numatytasis sarasas tuscias, o tikroji reiksme ateina is
+    aplinkos (GitHub'e – is Secrets).
+
+    Jei aplinkoje nieko nera, lieka tai, kas config.json – taip senos
+    konfiguracijos nesulūzta."""
+    raw = os.environ.get("ADMIN_IDS", "").strip()
+    if not raw:
+        return cfg
+    ids = [part.strip() for part in raw.replace(";", ",").split(",") if part.strip()]
+    if ids:
+        cfg["ADMIN_IDS"] = ids
+    return cfg
 
 
 def _dry_run_from_env():
