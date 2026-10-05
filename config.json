@@ -1,8 +1,9 @@
 {
   "SOURCES": [
-    "vinted"
+    "vinted",
+    "pirkpard"
   ],
-  "PARALLEL_SOURCES": false,
+  "PARALLEL_SOURCES": true,
   "VINTED_BROWSE_ALL": true,
   "VINTED_QUERIES": [],
   "VINTED_BROWSE_PAGES": 6,

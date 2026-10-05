@@ -169,13 +169,22 @@ class SearchTest(unittest.TestCase):
         self.assertEqual(source.unavailable, "Cloudflare apsauga")
 
     def test_status_from_single_full_listing(self):
-        """Busena visiems gaunama viena uzklausa – atskirai tikrinti nereikia."""
+        """Busena visiems gaunama BENDRAI – atskiro puslapio kiekvienam nereikia.
+
+        v50: uzklausu tiek, kiek ijungtu gamintoju (anksciau visada 1, nes
+        tikrintas tik `queries[0]` – del to kitu gamintoju skelbimai klaidingai
+        tapdavo „gone"). Esme nepasikeite: tai KELIOS uzklausos simtams skelbimu,
+        o ne po viena kiekvienam."""
+        from vinted import catalog, config
+
         api = FakeApi()
         source = PirkpardSource(client=api)
         self.assertEqual(source.status("3748"), "active")
         self.assertEqual(source.status("3645"), "sold")
         self.assertEqual(source.status("999999"), "gone")   # nebera sarase
-        self.assertEqual(len(api.calls), 1)                 # ir tik viena uzklausa visiems
+        brands = len(catalog.enabled(config.cfg.get("BRANDS")))
+        self.assertEqual(len(api.calls), brands)
+        self.assertLessEqual(len(api.calls), 5, "uzklausu kiekis neturi augti su skelbimais")
         self.assertEqual(api.calls[0]["include_sold"], 1)
 
 

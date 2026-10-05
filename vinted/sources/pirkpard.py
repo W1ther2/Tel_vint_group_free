@@ -298,25 +298,40 @@ class PirkpardSource(Source):
 
     # --- pardavimu patikra -------------------------------------------------
     def states(self):
-        """Visi skelbimai (ir parduoti) viena uzklausa – is jos matyti kiekvieno busena."""
+        """Visu skelbimu (ir parduotu) busena – po viena uzklausa kiekvienam gamintojui.
+
+        v50: iki siol cia buvo `queries[0]`, t. y. tikrinamas TIK pirmas gamintojas.
+        Su vienu gamintoju („iphone") tai veike. Ijungus penkis, kiekvienas Samsung,
+        Xiaomi, Pixel ir OnePlus skelbimas butu nerastas „iphone" sarase, o `complete`
+        vis tiek butu True – tad `status()` grazintu „gone", o `GONE_AS_SOLD` paverstu
+        ji PARDUOTU prasoma kaina. T. y. isgalvotas pardavimas, kuris dar ir patektu
+        i „parduotu" medianas bei kalibracija.
+
+        `complete` dabar True tik tada, kai VISOS paieskos pasieke savo pabaiga: uztenka
+        vienai nutrukti, ir nerastas skelbimas lieka „unknown", o ne „parduotas"."""
         if self._states is not None:
             return self._states
         c = config.cfg
-        states, page, complete = {}, 1, False
-        while page <= c["PIRKPARD_STATUS_PAGES"]:
-            queries = config.brand_queries(c["PIRKPARD_QUERIES"])
-            data = self.client.get_json({"search": queries[0] if queries else "iphone",
-                                         "sort": "newest", "include_sold": 1,
-                                         "per_page": c["PIRKPARD_PER_PAGE"], "page": page})
-            if data is None:
-                break                       # puslapis nepavyko – likusiu busenos nezinom
-            for raw in data["data"]:
-                states[str(raw.get("id"))] = listing_state(raw)
-            meta = data.get("meta") or {}
-            if not data["data"] or (meta.get("last_page") and page >= meta["last_page"]):
-                complete = True
-                break
-            page += 1
+        queries = config.brand_queries(c["PIRKPARD_QUERIES"]) or ["iphone"]
+        states, complete = {}, True
+        for query in queries:
+            page, finished = 1, False
+            while page <= c["PIRKPARD_STATUS_PAGES"]:
+                data = self.client.get_json({"search": query, "sort": "newest",
+                                             "include_sold": 1,
+                                             "per_page": c["PIRKPARD_PER_PAGE"],
+                                             "page": page})
+                if data is None:
+                    break                   # puslapis nepavyko – sios paieskos nebaigem
+                for raw in data["data"]:
+                    states[str(raw.get("id"))] = listing_state(raw)
+                meta = data.get("meta") or {}
+                if not data["data"] or (meta.get("last_page") and page >= meta["last_page"]):
+                    finished = True
+                    break
+                page += 1
+            if not finished:
+                complete = False            # viena nebaigta -> visas sarasas nepilnas
         self._states, self._states_complete = states, complete
         return states
 
