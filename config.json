@@ -183,9 +183,9 @@
   "MARKET_SCALE_UNIFIED": false,
   "TOPIC_BY_BRAND": {
     "apple": "",
-    "samsung": "",
-    "xiaomi": "",
-    "google": "",
-    "oneplus": ""
+    "samsung": "1440",
+    "xiaomi": "1440",
+    "google": "1440",
+    "oneplus": "1440"
   }
 }
