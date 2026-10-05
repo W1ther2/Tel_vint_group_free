@@ -255,6 +255,12 @@ class Market:
                 self._event("status", iid, day, st="active", was=e.get("st"))
                 e["st"] = "active"
                 e.pop("sd", None)
+                # Ir patvirtinima: skelbimas, vel atsiradęs kataloge, nebuvo parduotas.
+                # Svarbu nuo v50, kai „rezervuota" laikoma patvirtintu pardavimu –
+                # isirusi rezervacija kitaip liktu amzinai kaip `sv=1` ir maitintu
+                # kalibracija kaina, uz kuria niekas nepirko.
+                e.pop("sv", None)
+                e.pop("rs", None)
         return drops
 
     @locked
@@ -373,11 +379,27 @@ class Market:
             e.pop("sd", None)
             e.pop("sv", None)
             return
-        if status == "sold" or (status == "gone" and config.cfg["GONE_AS_SOLD"]):
+        # „Rezervuota" = Vinted vienintelis realus pardavimo signalas (v50).
+        #
+        # Ismatuota 2026-10-05 is archyvo: per 19 dienu Vinted NE KARTO nepasake
+        # „parduota" (0 is 2318 „sold" irasu buvo patvirtinti) – parduota skelbima
+        # jis tiesiog istrina, ir mes gaunam 404 = „dingo". Uz tai 8 kartus pasake
+        # „rezervuota", o tai Vinted reiskia, kad pirkejas jau sumokejo.
+        #
+        # Paskutine prasoma kaina rezervacijos momentu IR YRA uzsidarymo kaina –
+        # butent to reikia confidence.ask_quote. Tai net geresnis irodymas uz
+        # puslapi, tikrinama po keliu dienu: pagaunam pardavimo akimirka.
+        #
+        # Rizika: rezervacija gali isirti. Tada skelbimas vel pasirodo kataloge,
+        # ir observe() nuima „sold" kartu su `sv`/`rs` (zr. ten).
+        reserved_sold = status == "reserved" and config.cfg["RESERVED_AS_SOLD"]
+        if status == "sold" or reserved_sold or (status == "gone" and config.cfg["GONE_AS_SOLD"]):
             e["st"], e["sd"] = "sold", day
             # "sv" = ar tikrai parduotas (puslapis taip sako), ar tik dingo (galejo buti istrintas).
             # Tikslumo skaiciavimui pirmiausia naudojam patvirtintus.
-            e["sv"] = 1 if status == "sold" else 0
+            e["sv"] = 1 if (status == "sold" or reserved_sold) else 0
+            if reserved_sold:
+                e["rs"] = 1          # patvirtinimas is rezervacijos, ne is „parduota" puslapio
         elif status == "gone":
             e["st"] = "gone"
 

@@ -274,6 +274,16 @@ DEFAULTS = {
     "DRY_RUN": False,
     "PAUSED": False,                 # True = skelbimai nesiunciami (Telegram /pauze)
     "DEBUG": False,
+    # Ar „rezervuota" laikyti PATVIRTINTU pardavimu (v50).
+    #
+    # Ismatuota 2026-10-05: per 19 dienu Vinted nedave NE VIENO „parduota" –
+    # is 2318 jo „sold" irasu patvirtintu buvo 0 (visi keturi patvirtinimai,
+    # ant kuriu stovi confidence.PRIOR, atejo is Pirkpard). Uz tai „rezervuota"
+    # jis pranesa, o tai reiskia, kad pirkejas sumokejo.
+    #
+    # false = kaip iki v50: rezervacija keiciа tik `tracked` baigti, o rinkos
+    # kaina ir kalibracija jos nemato.
+    "RESERVED_AS_SOLD": True,
     # Kokia salies uzklausu dalis rezervuojama JAU MATYTIEMS, bet dar nepatikrintiems
     # skelbimams. 0 = kaip iki v50 (nauji visada pirmi, laukiantys gauna tik likuti).
     # Zr. Run._country_queue – be rezervo laukianciuju eile nustoja judeti visai,
