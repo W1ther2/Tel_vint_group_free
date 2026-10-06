@@ -232,9 +232,16 @@ class Market:
             # nebelikdavo nieko, tad klausimo „ar 45 buvo teisinga riba" nebuvo kaip
             # uzduoti – irodymai buvo ismetami prie duru. Dabar filtras taikomas
             # SKAITANT (`values()`, `peers()` ignoruoja `x`), o archyve lieka viskas.
-            if price < max(40, min_price(model)):          # dezutes, dalys, sugede – ne rinkos kaina
+            # Riba, kuri TIKRAI taikoma: modelio minimumas, bet ne maziau nei 40 EUR.
+            # Butina ja ir uzrasyti. Pirma versija rase `min_price(model)`, tad archyve
+            # atsidurdavo nesamone: „iPhone 8 uz 37 EUR, riba 30 – below_floor". Skelbimas
+            # buvo atmestas teisingai (37 < 40), bet irasas apie tai tvirtino, kad kaina
+            # virs ribos. Archyvas yra tam, kad ribas butu galima tikrinti matuojant, tad
+            # klaidinga `fl` reiksme sugadina butent ta, del ko archyvas rasomas.
+            floor = max(40.0, min_price(model))
+            if price < floor:                              # dezutes, dalys, sugede – ne rinkos kaina
                 self._event("skip", l.uid, day, why="below_floor", src=l.source,
-                            m=model, p=round(price, 2), fl=round(min_price(model), 2))
+                            m=model, p=round(price, 2), fl=round(floor, 2))
                 continue
             ceiling = price_ceiling(model)
             if ceiling and price > ceiling:
@@ -330,7 +337,12 @@ class Market:
         e = self.items.get(iid)
         if e is not None:
             e["a"] = round(price, 2)
-            self._event("alert", iid, today(), p=e["a"], q=e.get("q"), qc=e.get("qc"))
+            # `m` ir `s` butini: be ju archyve pranesimo modelio nera, o visas archyvo
+            # tikslas – veliau atsakyti „kurie modeliai realiai pasiteisina". Be modelio
+            # pranesimai yra vienintelis ivykio tipas, kurio pagal modeli nesugrupuosi
+            # (obs/skip/status ji turi).
+            self._event("alert", iid, today(), m=e.get("m"), s=e.get("s") or None,
+                        p=e["a"], q=e.get("q"), qc=e.get("qc"))
 
     @locked
     def mark_evaluated(self, item_id, price):

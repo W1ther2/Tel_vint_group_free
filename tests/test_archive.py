@@ -9,7 +9,7 @@ import os
 import time
 import unittest
 
-from tests.helpers import TempDir, item, reset_config
+from tests.helpers import TempDir, item, listing, reset_config
 from tests.test_flow import FakeClient, FakeTelegram, market_items, run
 from vinted import archive, config
 
@@ -83,6 +83,41 @@ class RunWritesArchiveTest(unittest.TestCase):
             self.assertEqual((new["qs"], new["qn"]), ("s", 21))
             price = [e for e in events if e["e"] == "price"]
             self.assertEqual((price[0]["p"], price[0]["pp"]), (170, 190))
+
+    def test_alert_event_records_the_model(self):
+        """Be `m` pranesimai butu vienintelis ivykio tipas, kurio pagal modeli
+        nesugrupuosi – o archyvas rasomas butent tam, kad veliau butu galima
+        atsakyti „kurie modeliai realiai pasiteisina". Gyvai (2026-10-06) visi
+        8 archyve buve pranesimai buvo be modelio."""
+        with TempDir():
+            cat = market_items() + [item(1, "iPhone 13 128GB", 190, user_id=1)]
+            run(FakeClient({"iPhone 13": cat}), FakeTelegram())
+            alerts = [e for e in archive.read() if e["e"] == "alert"]
+            self.assertTrue(alerts)
+            for a in alerts:
+                self.assertEqual(a.get("m"), "13", a)
+                self.assertIn("p", a)
+
+    def test_below_floor_records_the_floor_that_was_applied(self):
+        """Riba yra max(40, min_price) – ja ir reikia uzrasyti.
+
+        Pirma versija rase `min_price(model)`, tad archyve atsidurdavo nesamone:
+        gyvai „iPhone 8 uz 37 EUR, riba 30 – below_floor" (3 atvejai). Skelbimas
+        atmestas teisingai (37 < 40), bet irasas tvirtino, kad kaina VIRS ribos.
+        Archyvas skirtas ribas tikrinti matuojant, tad klaidinga `fl` gadina
+        butent ta, del ko jis rasomas."""
+        from vinted.market import Market
+        from vinted.phone import min_price
+        with TempDir():
+            reset_config(BRANDS=["apple"])
+            self.assertLess(min_price("8"), 40, "testas turi prasme tik jei modelio riba < 40")
+            m = Market()
+            m.observe([listing(1, "iPhone 8 64GB", 37.0, user_id=1)], day=100)
+            skips = [e for e in m.drain_events() if e.get("why") == "below_floor"]
+            self.assertEqual(len(skips), 1)
+            self.assertEqual(skips[0]["fl"], 40.0)
+            self.assertLess(skips[0]["p"], skips[0]["fl"],
+                            "uzrasyta kaina turi buti ZEMIAU uzrasytos ribos")
 
     def test_status_keeps_what_the_page_said(self):
         """„Dingo“ ir „tikrai parduota“ archyve atskirti – GONE_AS_SOLD to nesulieja."""

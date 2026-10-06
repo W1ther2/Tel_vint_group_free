@@ -267,7 +267,15 @@ DEFAULTS = {
     # saugomas state.json ("rate_limit"). false = visada laikyti VINTED_MAX_PER_MINUTE.
     "VINTED_RATE_ADAPT": True,
     # Zemiausias greitis, iki kurio dar mazinam (zemiau – paleidimas nebespetu nieko).
-    "VINTED_RATE_MIN": 15,
+    #
+    # Buvo 15, nuleista iki 10 (2026-10-06) pagal matavima: Vinted atsake 429 jau prie
+    # 15/min, t. y. prie paciu grindu. Tada AIMD nebeturi kur mazinti – greitis lieka
+    # 15, 429 pasikartoja kiekviename paleidime, o po kiekvieno eina 60 s atvesinimas.
+    # Gyvai tai kainavo 12 NEATLIKTU uzklausu per paleidima ("skipped": 12) – t. y. 12
+    # neatidarytu skelbimu puslapiu. Mazesnis greitis be 429 praleidzia DAUGIAU uzklausu
+    # nei didesnis su atvesinimais, tad grindys turi likti zemiau tikrosios ribos: kitaip
+    # jos ne saugo, o blokuoja patį mokyma.
+    "VINTED_RATE_MIN": 10,
     # Kiek valandu atsiminti greiti, kuriam serveris atsake 429. Tiek laiko grizdami
     # aukstyn sustojam 3/min zemiau jo – kitaip kas kelis paleidimus vel atsitrenktume i ta
     # pacia siena, o toks paleidimas praranda didele dali skelbimu puslapiu (pjuklas).
