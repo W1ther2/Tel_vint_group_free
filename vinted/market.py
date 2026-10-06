@@ -110,6 +110,29 @@ def with_source(key):
     return key if ":" in key else "vinted:" + key
 
 
+# Nuo kokios ribos dalies atmetimas laikomas „ribiniu" ir i archyva rasomas kartu su
+# pavadinimu. Zemiau sios ribos pavadinimo nerasom: tokiu atmetimu daugybe (82 % yra
+# <20 % ribos – dekle, stiklai, dalys), ir ju pavadinimai archyva tik dvigubintu.
+MARGIN_SHARE = 0.6
+
+
+def _margin_title(listing, price, floor):
+    """Pavadinimas, bet tik ribiniams atmetimams.
+
+    Kodel to reikia: 2026-10-06 is 412 atmetimu 22 buvo >=80 % ribos (pvz. „iPhone
+    15 Pro uz 196, riba 200"), ir atsakyti „kas tai per skelbimai" buvo galima tik
+    atidarius juos narsykleje po vieno. Dauguma iki tol jau istrinti.
+
+    Pavadinimas ta atsako is karto. Patikrinus gyvai, visi ribiniai atvejai buvo
+    vienas is dvieju: lenkiskas skelbimas, raginantis mokėti uz platformos
+    („tylko blik", „Sprzedaz wylacznie przez Allegro albo OLX", „prosze nie
+    kupywac przez kup teraz"), arba tikrai sugedes telefonas („tagant katki",
+    baterija 79 %). Nei vieno tikro lietuviško pigaus telefono."""
+    if not floor or price < floor * MARGIN_SHARE:
+        return None
+    return ((listing.title or "")[:70]) or None
+
+
 # Kaip buvo gauta kaina, kuria spejom tam telefonui ji pirma karta pamate.
 # Kalibruojam tik pagal "s" – tik prasomu kainu vertinimas turi sistemine paklaida.
 SOURCE_CODE = {"rankinė": "m", "parduoti": "d", "skelbimai": "s", "apytikslė": "t"}
@@ -241,7 +264,8 @@ class Market:
             floor = max(40.0, min_price(model))
             if price < floor:                              # dezutes, dalys, sugede – ne rinkos kaina
                 self._event("skip", l.uid, day, why="below_floor", src=l.source,
-                            m=model, p=round(price, 2), fl=round(floor, 2))
+                            m=model, p=round(price, 2), fl=round(floor, 2),
+                            ti=_margin_title(l, price, floor))
                 continue
             ceiling = price_ceiling(model)
             if ceiling and price > ceiling:
@@ -251,7 +275,8 @@ class Market:
                 # istorija ir tempdavo mediana auksyn. Gyvai matyta: OnePlus 11 uz
                 # 899 EUR, kai to modelio kaina ~165.
                 self._event("skip", l.uid, day, why="above_ceiling", src=l.source,
-                            m=model, p=round(price, 2), fl=round(ceiling, 2))
+                            m=model, p=round(price, 2), fl=round(ceiling, 2),
+                            ti=(title or "")[:70] or None)
                 continue
             if not condition_ok(l.condition, "Gera"):      # patenkinamos bukles – ne rinkos kaina
                 continue

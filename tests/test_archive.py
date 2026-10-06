@@ -119,6 +119,31 @@ class RunWritesArchiveTest(unittest.TestCase):
             self.assertLess(skips[0]["p"], skips[0]["fl"],
                             "uzrasyta kaina turi buti ZEMIAU uzrasytos ribos")
 
+    def test_marginal_rejection_keeps_the_title(self):
+        """Ribinis atmetimas (>=60 % ribos) archyve turi pavadinima.
+
+        Be jo klausimas „kas tai per skelbimai" reiškė naršyklę ir po vieno –
+        o dauguma jau būna ištrinti. Gyvai tai buvo arba lenkiškas „tylko blik",
+        arba tikrai sugedęs telefonas."""
+        from vinted.market import Market
+        with TempDir():
+            reset_config(BRANDS=["apple"])
+            m = Market()
+            m.observe([listing(1, "Iphone 15 pro - tylko blik", 196.0, user_id=1)], day=100)
+            skip = [e for e in m.drain_events() if e.get("why") == "below_floor"][0]
+            self.assertEqual(skip["ti"], "Iphone 15 pro - tylko blik")
+
+    def test_obvious_junk_does_not_bloat_the_archive(self):
+        """82 % atmetimu yra <20 % ribos (dekle, stiklai, dalys) – ju pavadinimu
+        nerasom, kitaip archyvas dvigubetu be jokios naudos."""
+        from vinted.market import Market
+        with TempDir():
+            reset_config(BRANDS=["apple"])
+            m = Market()
+            m.observe([listing(1, "iPhone 15 Pro 256GB", 5.0, user_id=1)], day=100)
+            skip = [e for e in m.drain_events() if e.get("why") == "below_floor"][0]
+            self.assertIsNone(skip.get("ti"))
+
     def test_status_keeps_what_the_page_said(self):
         """„Dingo“ ir „tikrai parduota“ archyve atskirti – GONE_AS_SOLD to nesulieja."""
         from vinted.market import Market
