@@ -20,7 +20,9 @@
     "samsung",
     "xiaomi",
     "google",
-    "oneplus"
+    "oneplus",
+    "huawei",
+    "nothing"
   ],
   "MODELS": [],
   "SEARCH_QUERIES": [
@@ -191,6 +193,8 @@
     "samsung": "1440",
     "xiaomi": "1440",
     "google": "1440",
-    "oneplus": "1440"
+    "oneplus": "1440",
+    "huawei": "1440",
+    "nothing": "1440"
   }
 }

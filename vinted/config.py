@@ -62,7 +62,7 @@ DEFAULTS = {
     "PIRKPARD_STATUS_PAGES": 3,       # kiek puslapiu perziureti tikrinant, kas parduota
 
     # --- Ka ieskoti ---
-    # Gamintojai. Galimi: "apple", "samsung", "xiaomi", "google", "oneplus".
+    # Gamintojai. Galimi: "apple", "samsung", "xiaomi", "google", "oneplus", "huawei", "nothing".
     # Tuscias sarasas = visi. Kiekvienas gamintojas = viena papildoma paieska per paleidima,
     # tad ir daugiau nauju skelbimu, kuriems reikia pardavejo salies uzklausos
     # (SELLER_COUNTRY_LOOKUPS riba – 40). Nori tik telefonu, kuriuos perparduosi –

@@ -184,6 +184,38 @@ ONEPLUS_MIN_PRICES = {
 ONEPLUS_ORDER = ["OnePlus 11", "OnePlus 12", "OnePlus 13"]
 _ONEPLUS = re.compile(r"\bone\s?plus\s?(\d{1,2})(?!\d)\b")
 
+# --- Huawei / Nothing (2026-10-07) -------------------------------------------
+# Kainos – SPEJIMAS (ne gyvas matavimas): ~45 % iprastos naudoto kainos Lietuvoje, kaip ir
+# kitu gamintoju riba. Prior.samples == 0, tad confidence juos laiko „zemu“ lygiu, kol
+# susikaups rinkos istorija. Huawei pinga greiciau (nuo P40 – be Google paslaugu), todel
+# ribos zemesnes nei tos pacios klases kitu gamintoju.
+HUAWEI_MIN_PRICES = {
+    "Huawei P30": 30, "Huawei P30 Pro": 45, "Huawei P40": 40, "Huawei P40 Pro": 60,
+    "Huawei P50": 65, "Huawei P50 Pro": 90, "Huawei P60 Pro": 135,
+    "Huawei Mate 20 Pro": 30, "Huawei Mate 30 Pro": 50, "Huawei Mate 40 Pro": 80,
+    "Huawei Mate 50 Pro": 135, "Huawei Pura 70": 155, "Huawei Pura 70 Pro": 200,
+    "Huawei Pura 70 Ultra": 270, "Huawei Pura 80 Pro": 300, "Huawei Pura 80 Ultra": 360,
+}
+HUAWEI_ORDER = ["Huawei P30", "Huawei P30 Pro", "Huawei P40", "Huawei P40 Pro", "Huawei P50",
+                "Huawei P50 Pro", "Huawei P60 Pro", "Huawei Mate 20 Pro", "Huawei Mate 30 Pro",
+                "Huawei Mate 40 Pro", "Huawei Mate 50 Pro", "Huawei Pura 70", "Huawei Pura 70 Pro",
+                "Huawei Pura 70 Ultra", "Huawei Pura 80 Pro", "Huawei Pura 80 Ultra"]
+# „Huawei P30 Pro“, „huawei mate20 pro“, „Huawei Pura 70 Ultra“. „P30 lite“, „P40 lite E“,
+# „P smart“, „nova“, „Y“ – pigios serijos, ne flagmanai.
+_HUAWEI = re.compile(r"\b(p|mate|pura)\s?(\d{2})(?!\d)\s*(pro\s?\+|pro\s?plus|pro|ultra)?(?!\w)")
+_HUAWEI_CHEAP = re.compile(r"\b(?:lite|nova|smart|enjoy|honor)\b")
+
+NOTHING_MIN_PRICES = {
+    "Nothing Phone (1)": 55, "Nothing Phone (2)": 100, "Nothing Phone (2a)": 70,
+    "Nothing Phone (2a) Plus": 80, "Nothing Phone (3a)": 90, "Nothing Phone (3a) Pro": 115,
+    "Nothing Phone (3)": 200,
+}
+NOTHING_ORDER = ["Nothing Phone (1)", "Nothing Phone (2a)", "Nothing Phone (2a) Plus",
+                 "Nothing Phone (2)", "Nothing Phone (3a)", "Nothing Phone (3a) Pro",
+                 "Nothing Phone (3)"]
+# „Nothing Phone (2a)“, „nothing phone 3a pro“, „Nothing phone2“. CMF Phone – pigi serija.
+_NOTHING = re.compile(r"\bnothing\s*phone\s*\(?\s*([1-9])\s*(a)?\s*\)?\s*(pro|plus|\+)?(?!\w)")
+
 
 def _samsung(t):
     found = set()
@@ -222,6 +254,28 @@ def _oneplus(t):
     return {f"OnePlus {m.group(1)}" for m in _ONEPLUS.finditer(t)}
 
 
+def _huawei(t):
+    if _HUAWEI_CHEAP.search(t):
+        return set()                       # lite / nova / Honor – ne flagmanai
+    found = set()
+    for m in _HUAWEI.finditer(t):
+        series = {"p": "P", "mate": "Mate ", "pura": "Pura "}[m.group(1)]
+        var = re.sub(r"\s+", "", m.group(3) or "")
+        var = {"pro": " Pro", "pro+": " Pro+", "proplus": " Pro+", "ultra": " Ultra", "": ""}.get(var, "")
+        found.add(f"Huawei {series}{m.group(2)}{var}")
+    return found
+
+
+def _nothing(t):
+    if "cmf" in t:
+        return set()                       # CMF Phone – pigi serija
+    found = set()
+    for m in _NOTHING.finditer(t):
+        var = {"pro": " Pro", "plus": " Plus", "+": " Plus", "": ""}[m.group(3) or ""]
+        found.add(f"Nothing Phone ({m.group(1)}{'a' if m.group(2) else ''}){var}")
+    return found
+
+
 class Brand:
     """Vienas gamintojas: kaip ji atpazinti ir kiek jo modeliai verti."""
 
@@ -258,8 +312,12 @@ GOOGLE = Brand("google", "Google Pixel", "google pixel", ("pixel",), PIXEL_MIN_P
                PIXEL_ORDER, _pixel)
 ONEPLUS = Brand("oneplus", "OnePlus", "oneplus", ("oneplus", "one plus"), ONEPLUS_MIN_PRICES,
                 ONEPLUS_ORDER, _oneplus)
+HUAWEI = Brand("huawei", "Huawei", "huawei", ("huawei",), HUAWEI_MIN_PRICES, HUAWEI_ORDER, _huawei)
+# „nothing“ – iprastas angliskas zodis, tad gamintojas atpazistamas tik su „phone“.
+NOTHING = Brand("nothing", "Nothing", "nothing phone", ("nothing phone", "nothingphone"),
+                NOTHING_MIN_PRICES, NOTHING_ORDER, _nothing)
 
-BRANDS = [APPLE, SAMSUNG, XIAOMI, GOOGLE, ONEPLUS]
+BRANDS = [APPLE, SAMSUNG, XIAOMI, GOOGLE, ONEPLUS, HUAWEI, NOTHING]
 BY_KEY = {b.key: b for b in BRANDS}
 # Modelio ID -> gamintojas. Apple ID be priesdelio, tad jie ir lieka tokie, kokie buvo.
 BRAND_OF = {m: b for b in BRANDS for m in b.prices}

@@ -94,6 +94,55 @@ class PixelOnePlusTest(unittest.TestCase):
         self.assertEqual(detect_model("One Plus 13"), "OnePlus 13")
 
 
+ALL_BRANDS = ["apple", "samsung", "xiaomi", "google", "oneplus", "huawei", "nothing"]
+
+
+class HuaweiNothingTest(unittest.TestCase):
+    """2026-10-07: Huawei ir Nothing flagmanai Android skiltyje."""
+
+    def setUp(self):
+        reset_config(BRANDS=ALL_BRANDS)
+
+    def test_huawei_flagships(self):
+        cases = {
+            "Huawei P30 Pro 128GB": "Huawei P30 Pro",
+            "huawei mate20 pro": "Huawei Mate 20 Pro",
+            "HUAWEI P40": "Huawei P40",
+            "Huawei Pura 70 Ultra": "Huawei Pura 70 Ultra",
+            "Parduodu Huawei P50 Pro, idealus": "Huawei P50 Pro",
+        }
+        for title, expected in cases.items():
+            self.assertEqual(detect_model(title), expected, title)
+
+    def test_huawei_cheap_lines_ignored(self):
+        for title in ["Huawei P30 lite", "Huawei P40 lite E", "Huawei nova 9", "Huawei P smart 2021",
+                      "Honor 90", "Huawei P20 Pro"]:            # P20 – per senas, lenteleje nera
+            self.assertIsNone(detect_model(title), title)
+
+    def test_nothing_phones(self):
+        cases = {
+            "Nothing Phone (2a)": "Nothing Phone (2a)",
+            "nothing phone 3a pro": "Nothing Phone (3a) Pro",
+            "Nothing Phone 2 256GB": "Nothing Phone (2)",
+            "Nothing phone (2a) Plus": "Nothing Phone (2a) Plus",
+            "NOTHING PHONE (1)": "Nothing Phone (1)",
+        }
+        for title, expected in cases.items():
+            self.assertEqual(detect_model(title), expected, title)
+
+    def test_nothing_needs_phone_word_and_skips_cmf(self):
+        self.assertIsNone(detect_model("CMF Phone 1 by Nothing"))
+        self.assertEqual(detect_model("nothing to say, iPhone 13"), "13")
+
+    def test_accessories(self):
+        for title in ["Dėklas Nothing Phone 2", "Nothing Phone (2) case", "Huawei P30 dėklas"]:
+            self.assertTrue(is_accessory(title), title)
+
+    def test_queries(self):
+        from vinted import config
+        self.assertEqual(config.brand_queries([])[-2:], ["huawei", "nothing phone"])
+
+
 class MixedTest(unittest.TestCase):
     def setUp(self):
         reset_config()
