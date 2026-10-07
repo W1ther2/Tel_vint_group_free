@@ -150,21 +150,71 @@ class FlowTest(unittest.TestCase):
 
 
 class CardTest(unittest.TestCase):
-    def test_rank_line_hidden_by_default(self):
-        """Prekiautojui vieta sarase nereikalinga – kortelej jos nerodom (atrankai naudojama)."""
-        rank_config()
+    @staticmethod
+    def sample_card(**over):
         from vinted.market import Quote, Rank
         from vinted.telegram import format_card
-        card = format_card({
-            "model": "8", "storage": None, "price": 45.0, "discount": 0.11,
-            "value": 50.0, "description": "", "quote": Quote(56, 6, "parduoti", False),
-            "defects": [], "condition": "Gera", "battery": None, "seller": {},
-            "url": "https://www.vinted.lt/items/1",
-            "rank": Rank(place=12, n=64, low=40, high=99, share=0.17, by_storage=False)})
-        self.assertNotIn("pigiausias iš", card)
-        self.assertNotIn("dabar parduodamų", card)
+        d = {"model": "8", "storage": None, "price": 45.0, "discount": 0.11,
+             "value": 50.0, "description": "", "quote": Quote(56, 6, "parduoti", False),
+             "defects": [], "condition": "Gera", "battery": None, "seller": {},
+             "url": "https://www.vinted.lt/items/1",
+             "rank": Rank(place=12, n=64, low=40, high=99, share=0.17, by_storage=False)}
+        d.update(over)
+        return format_card(d)
+
+    def test_rank_line_shown_by_default(self):
+        """Nuo v50 vieta sarase RODOMA – tai argumentas, pagal kuri botas ir sprendzia.
+
+        Iki tol SHOW_RANK buvo False, nors DEAL_MODE jau buvo „rank": atranka vyko pagal
+        patikrinama fakta, o vartotojas matydavo tik „~11 % pigiau nei vertinta" – spejima
+        is skaiciaus, kurio sistema pati dar nepatvirtino (1 kalibracijos pavyzdys is 20).
+        Vieta tarp dabar parduodamu nuo musu spejimo nepriklauso ir patikrinama
+        atsidarius Vinted."""
+        rank_config()
+        card = self.sample_card()
+        self.assertIn("12-as pigiausias iš 64", card)
+        self.assertIn("dabar parduodamų", card)
         self.assertIn("iPhone 8 | 45 €", card)
         self.assertIn("~11% pigiau nei vertinta", card)
+
+    def test_rank_line_can_still_be_turned_off(self):
+        rank_config()
+        config.cfg["SHOW_RANK"] = False
+        self.assertNotIn("pigiausias iš", self.sample_card())
+
+    def test_profit_hidden_when_the_value_is_not_trustworthy(self):
+        """Pelnas skaiciuojamas is tos pacios vertes, prie kurios kortele raso „±30 %".
+
+        Prie 268 € ±30 % tikrasis intervalas yra 188–348 €, tad 184 € telefono pelnas
+        yra kazkur tarp -18 € ir +142 €. Vienas skaicius „~62 €" tai paslepia ir
+        skaitosi kaip pazadas, o ne spejimas. Zemo patikimumo kortelei argumentas yra
+        vieta tarp parduodamu, ne pelnas."""
+        from vinted.confidence import assess
+        from vinted.market import Quote
+        rank_config()
+        weak = Quote(267.8, 42, "skelbimai", True, 0.22, 315.0)       # sklaida 22 % -> "m"
+        conf = assess(weak, {})
+        self.assertEqual(conf.code, "m")
+        card = self.sample_card(price=184.0, value=268.0, profit=62.0,
+                                quote=weak, confidence=conf)
+        self.assertNotIn("Galimas pelnas", card)
+        self.assertIn("pigiausias iš", card)                          # argumentas lieka
+
+    def test_profit_shown_when_the_value_is_trustworthy(self):
+        from vinted.confidence import assess
+        from vinted.market import Quote
+        rank_config()
+        strong = Quote(267.8, 42, "skelbimai", True, 0.08, 315.0)     # sklaida 8 % -> "h"
+        conf = assess(strong, {})
+        self.assertEqual(conf.code, "h")
+        card = self.sample_card(price=184.0, value=268.0, profit=62.0,
+                                quote=strong, confidence=conf)
+        self.assertIn("Galimas pelnas", card)
+
+    def test_profit_still_shown_when_confidence_is_not_computed(self):
+        """Senos vietos, kur `confidence` nenustatytas, elgiasi kaip anksciau."""
+        rank_config()
+        self.assertIn("Galimas pelnas", self.sample_card(profit=20.0))
 
     def test_card_explains_why(self):
         rank_config()

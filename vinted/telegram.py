@@ -69,7 +69,18 @@ def _card(d, desc, reasons, hidden_reasons, dropped):
     if sus and "suspicious" not in dropped:
         lines.append(f"⚠️ <b>Įtartinai pigu:</b> {1 - sus['ratio']:.0%} pigiau už kitą pigiausią "
                      f"({sus['peer_low']:.0f} €) – patikrink, ar veikia ir ar ne užrakintas")
-    if config.cfg["SHOW_PROFIT"] and d.get("profit") is not None:
+    # Pelnas rodomas TIK kai rinkos kaina pakankamai patikima.
+    #
+    # Kodel: „Galimas pelnas: ~62 €" skaiciuojamas is tos pacios vertes, prie kurios ta
+    # pati kortele raso „±30 %". Prie 268 € ±30 % tikrasis intervalas yra 188–348 €, tad
+    # 184 € telefono pelnas yra kazkur tarp -18 € ir +142 €. Vienas skaicius „~62 €" tai
+    # paslepia ir skaitosi kaip pazadas. Zemo patikimumo kortelei argumentas yra vieta
+    # tarp parduodamu (`rank`), o ne pelnas.
+    conf_code = getattr(d.get("confidence"), "code", None)
+    show_profit = (config.cfg["SHOW_PROFIT"] and d.get("profit") is not None
+                   and (conf_code is None
+                        or conf_code in config.cfg["PROFIT_MIN_CONFIDENCE"]))
+    if show_profit:
         if d["profit"] > 0:
             lines.append(f"💵 <b>Galimas pelnas:</b> ~{d['profit']:.0f} € (perpardavus už ~{d['value']:.0f} €)")
         else:

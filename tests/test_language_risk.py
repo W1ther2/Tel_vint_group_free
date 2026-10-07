@@ -54,8 +54,70 @@ class RiskTest(unittest.TestCase):
         def reasons(desc):
             return assess_risk("iPhone 13", desc, 250, 290, {"rating": 4.9, "reviews": 20, "sold": 30})[1]
         self.assertIn("gali būti kopija", reasons("Tai kopija, bet veikia gerai ir greitai"))
-        for desc in ["Telefonas originalus, ne kopija, viskas veikia", "Pridedu pirkimo čekio kopiją ir dėžutę"]:
+        for desc in ["Telefonas originalus, ne kopija, viskas veikia",
+                     "Pridedu pirkimo čekio kopiją ir dėžutę",
+                     # Atvirkstine zodziu tvarka reiskia TA PATI, ka „ne kopija".
+                     # Lookbehind jos nepagaudavo – gyvai pazymedavo tvarkinga skelbima.
+                     "Tvarkingas, pirktas Lietuvoje, yra čekis. Kopijos nėra."]:
             self.assertNotIn("gali būti kopija", reasons(desc), desc)
+
+
+class OffPlatformScamTest(unittest.TestCase):
+    """Lenkiska schema: issivilioti pirkeja uz Vinted apsaugos ribu.
+
+    Visos frazes cia – is gyvu 2026-10-06/07 skelbimu, kuriuos pagavo apatine kainos
+    riba. Riba yra ATSITIKTINE apsauga: ji veikia tik todel, kad sukciai praso per
+    mazai. Jei toks skelbimas kada nors paprasys tikrosios kainos, jis praeis filtra
+    ir vartotojas gaus kortele be jokio ispejimo. Butent todel pozymiai cia, o ne
+    pasikliaujant riba."""
+
+    def setUp(self):
+        reset_config()
+
+    def flags(self, desc):
+        return assess_risk("iPhone 15 Pro", desc, 161, 700,
+                           {"rating": 4.9, "reviews": 20, "sold": 30})[1]
+
+    def test_blik_payment(self):
+        """BLIK – lenkiskas momentinis pervedimas: neatsaukiamas, be jokios apsaugos."""
+        self.assertIn("mokėjimas ne per Vinted",
+                      self.flags("Tylko płatność blik. Wysylam do 3 dni."))
+
+    def test_asks_not_to_use_buy_now(self):
+        self.assertIn("prašo NEnaudoti „Pirkti dabar“",
+                      self.flags("❗Prosze nie kupywac przez kup teraz❗"))
+
+    def test_redirect_to_another_marketplace(self):
+        for desc in ["Sprzedaż wyłącznie przez Allegro albo OLX",
+                     "Sprzedam na OLX, tutaj tylko oglądanie",
+                     "Tylko przez Allegro, prosze o kontakt"]:
+            self.assertIn("prašo pirkti kitoje svetainėje", self.flags(desc), desc)
+
+    def test_bank_transfer(self):
+        self.assertIn("mokėjimas ne per Vinted",
+                      self.flags("Zapłata przelewem na konto, nie przez Vinted"))
+
+    def test_the_real_listing_is_high_risk(self):
+        level, _ = assess_risk(
+            "Iphone 15 pro",
+            "❗Prosze nie kupywac przez kup teraz❗ Tylko płatność blik. Wysylam do 3 dni.",
+            161.0, 700.0, {"rating": 4.9, "reviews": 20, "sold": 30})
+        self.assertEqual(level, "didelė")
+
+    def test_courier_names_are_not_a_redirect(self):
+        """Riba, be kurios pozymis butu nenaudingas: „OLX WeDo" ir „Allegro One Box"
+        yra PAKETOMATAI, kuriuos mini visiskai tvarkingi lenku skelbimai. Pirma
+        versija juos pazymedavo kaip „didele rizika"."""
+        for desc in ["Sprzedam iPhone 12, stan bardzo dobry. Wysyłka OLX WeDo, paczkomat.",
+                     "Wysyłka Allegro One Box, polecam.",
+                     "Wysylka kurierem InPost, paczkomaty OLX."]:
+            self.assertNotIn("prašo pirkti kitoje svetainėje", self.flags(desc), desc)
+
+    def test_clean_lithuanian_listing_stays_clean(self):
+        level, reasons = assess_risk(
+            "iPhone 13 128GB", "Puikios būklės, su dėžute. Siunčiu per Vinted, baterija 91%.",
+            184, 268, {"rating": 4.9, "reviews": 25, "sold": 30, "account_age_days": 900})
+        self.assertIsNone(level, reasons)
 
 if __name__ == "__main__":
     unittest.main()

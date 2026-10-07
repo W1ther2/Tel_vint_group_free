@@ -164,12 +164,26 @@ DEFAULTS = {
 
     # --- Pelnas perpardavus ---
     "SHOW_PROFIT": True,
+    # Kuriems patikimumo lygiams pelna apskritai rodyti ("h"/"m"/"l", zr. confidence.py).
+    # Pelnas skaiciuojamas is tos pacios vertes, prie kurios kortele raso „±30 %": prie
+    # 268 € ±30 % tikrasis intervalas yra 188–348 €, tad 184 € telefono pelnas yra kazkur
+    # tarp -18 € ir +142 €. Vienas skaicius „~62 €" tai paslepia ir skaitosi kaip pazadas.
+    # Tad rodom tik tada, kai verte tikrai zinom.
+    "PROFIT_MIN_CONFIDENCE": ["h"],
     "MIN_PROFIT_EUR": 15,            # nesiusti, jei galimas pelnas mazesnis (0 = nesvarbu)
     # Kai skelbimas gerokai pigesnis uz KITA pigiausia – beveik visada kazkas negerai
     # (uzrakintas, be dalies, apgavyste). Santykis su kitu pigiausiu tokiu pat telefonu:
     "SUSPICIOUS_REJECT_RATIO": 0.60, # pigiau nei 60% kito pigiausio – atmesti
     "SUSPICIOUS_WARN_RATIO": 0.75,   # pigiau nei 75% – siusti, bet pazymeti ⚠️
-    "SHOW_RANK": False,              # rodyti kortelej „12-as pigiausias iš 64 ...“ (atrankai naudojama visada)
+    # Rodyti kortelej „Pigiausias iš 14 dabar parduodamu tokiu pat".
+    #
+    # Nuo v50 – True. Iki tol atranka vyko pagal `rank` (DEAL_MODE="rank"), bet vartotojas
+    # matydavo tik „~31 % pigiau nei vertinta" – t. y. botas SPRENDE pagal patikrinama
+    # fakta, o PASITEISINDAVO spejimu, kurio pats dar nepatvirtino (1 kalibracijos
+    # pavyzdys is 20). Vieta tarp dabar parduodamu nepriklauso nuo musu kainos spejimo ir
+    # yra patikrinama per 5 sekundes atsidarius Vinted – tai stipriausias argumentas,
+    # koki turim, ir jis buvo paslėptas.
+    "SHOW_RANK": True,
 
     # --- Rezultatu sekimas: ar praneseti skelbimai buvo nupirkti ir per kiek laiko ---
     "TRACK_RESULTS": True,

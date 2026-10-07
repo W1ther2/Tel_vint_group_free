@@ -12,15 +12,38 @@ RISK_PATTERNS = [
     (r"rasyk\w* (i |man )?(tel|nr|numer|asmen|privat)|skambink\w*|susisiek\w* telefon\w*|contact me",
      "prašo susisiekti ne per Vinted", 2),
     (r"pavedim\w*|revolut|paysera|paypal|western union|ne per vinted|be vinted|uz vinted rib\w*|"
-     r"outside vinted|not through vinted", "mokėjimas ne per Vinted", 2),
+     r"outside vinted|not through vinted|"
+     # Lenkiski: BLIK yra momentinis pervedimas, neatsaukiamas ir be jokios Vinted
+     # apsaugos. Gyvai rasta „Tylko płatność blik" prie iPhone 15 Pro 512 GB uz 161 EUR.
+     r"\bblik\b|przelew\w*|na konto", "mokėjimas ne per Vinted", 2),
+    # Nukreipimas i kita svetaine. Vinted pirkejo apsauga veikia TIK Vinted viduje, tad
+    # „pirk per Allegro/OLX" reiskia, kad pinigai keliaus be jokios garantijos. Gyvai:
+    # „Sprzedaż wyłącznie przez Allegro albo OLX" – pardavejas 0 atsiliepimu, paskyra 8 val.
+    #
+    # Tycia NEgaudom vieno „olx"/„allegro": „Wysyłka OLX WeDo" yra kurjerio paslauga
+    # (paketomatai), ir ja mini visiskai tvarkingi lenku skelbimai – patikrinta, toks
+    # pozymis klaidingai pazymedavo normalu skelbima kaip didelę rizika. Reikalaujam arba
+    # „wyłącznie", arba nukreipiancio prielinksnio pries pavadinima.
+    (r"wy[lł]aczni\w*|"
+     r"(?:tylko|na|przez|poprzez|sprzedaz|sprzedam)\s+(?:na\s+|przez\s+)?(?:olx|allegro)",
+     "prašo pirkti kitoje svetainėje", 4),
+    # „Neperkite per „Pirkti dabar"" – tiesioginis raginimas apeiti Vinted apsauga.
+    # Gyvai: „❗️Prosze nie kupywac przez kup teraz❗️ Tylko płatność blik".
+    (r"nie kupuj\w*|nie kupywa\w*|nie kupowa\w*|bez kup teraz|"
+     r"nenaudokit\w* pirkti dabar", "prašo NEnaudoti „Pirkti dabar“", 4),
     (r"tik atsiemim\w*|atsiemim\w* tik|tik is rank\w*|tik gyvai|tik susitik\w*|nesiunci\w*|siuntimo nera|"
      r"pickup only|only pickup|no shipping|collection only", "tik atsiėmimas iš rankų", 1),
     (r"be doku\w*|be ceki\w*|rast\w* telefon\w*|nezinau slaptazodz\w*|pamirst\w* slaptazodz\w*",
      "gali būti vogtas / be dokumentų", 2),
     (r"skubiai|skubus|urgent|greitai parduod\w*|isvykst\w*|emigruoj\w*", "skubus pardavimas", 1),
-    # „ne kopija“, „čekio kopija“ – ne kopijos pozymis
+    # „ne kopija“, „čekio kopija“ – ne kopijos pozymis. Lookahead del atvirkstines
+    # zodziu tvarkos: „kopijos nera" reiskia TA PATI, ka „ne kopija", bet lookbehind
+    # jo nepagauna – gyvai patikrinta, toks aprasymas buvo pazymimas „gali buti kopija".
     (r"(?<!\bne )(?<!cekio )(?<!saskaitos )(?<!pirkimo )(?<!dokumentu )(?<!garantinio )"
-     r"(?:kopij\w*|replik\w*|replica|clone|klonas)|\bcopy\b(?! of (?:the )?(?:receipt|invoice))|"
+     # `\b` pries lookahead butinas: be jo `\w*` atsitraukia („kopijo"), lookahead
+     # nebemato „ nera", ir pozymis vis tiek uzsideda.
+     r"(?:kopij\w*|replik\w*|replica|clone|klonas)\b(?!\s+n[eė]ra)|"
+     r"\bcopy\b(?! of (?:the )?(?:receipt|invoice))|"
      r"ne originalus telefonas", "gali būti kopija", 2),
 ]
 _RISK_RE = [(re.compile(r"\b(?:" + p + r")"), label, pts) for p, label, pts in RISK_PATTERNS]
