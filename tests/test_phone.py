@@ -89,6 +89,17 @@ class DefectTest(unittest.TestCase):
         self.assertEqual(self.labels("ekrane žalia linija"), ["ekrano gedimas"])
         self.assertEqual(self.labels("kodas atrištas, veikia puikiai, išbandytas"), [])
 
+    def test_cracked_word_forms(self):
+        """2026-10-07: „suskilęs“ Huawei P40 praslydo – atpazinta tik „skilęs“ / „įskilęs“."""
+        for text in ["Suskilęs ekranas", "Truputį suskilęs kampas", "Galinis dangtelis suskilęs",
+                     "suskilinėjęs ekranas", "sutrūkęs ekranas"]:
+            self.assertIn("skilęs", self.labels(text), text)
+        for text in ["Ekranas sudužęs", "dužęs stiklas"]:
+            self.assertIn("sudaužtas", self.labels(text), text)
+        for text in ["Nesuskilęs, be defektų", "Ekranas nesudužęs", "trūksta dėžutės",
+                     "Ekrano apsauga suskilusi, ekranas sveikas"]:
+            self.assertEqual(self.labels(text), [], text)
+
     def test_fatal_defects_zero(self):
         self.assertTrue(any(f == 0 for _, f in find_defects("iCloud užblokuotas")))
 

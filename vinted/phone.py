@@ -321,8 +321,10 @@ DEFECT_PATTERNS = [
      r"mirga|mirkcioj\w*|neveikia liet\w*|lietimas neveik\w*|touch not working|ghost touch",
      "ekrano gedimas", 0.50),
     (r"be garantij\w* ir be\b|nezinau istorij\w*|rastas", "neaiški kilmė", 0.80),
-    (r"i?skil\w*", "skilęs", 0.70),
-    (r"sudauz\w*|dauzt\w*", "sudaužtas", 0.65),
+    # „suskilęs“, „įskilęs“, „skilęs“, „sutrūkęs“ (2026-10-07: „suskilęs“ P40 praslydo – buvo tik i?skil)
+    (r"(?:su|i)?skil\w*|(?:su|i)?truk(?:es|usi\w*|ęs)\b", "skilęs", 0.70),
+    # „sudaužtas“, „daužtas“, „sudužęs“, „dužęs“
+    (r"sudauz\w*|dauzt\w*|(?:su)?duz(?:es|usi\w*|ęs)\b", "sudaužtas", 0.65),
     (r"cracked|crack", "įskilęs (cracked)", 0.70),
     (r"broken", "sugedęs (broken)", 0.55),
     (r"sugad\w*|sugedes|sugedo", "sugedęs", 0.55),
