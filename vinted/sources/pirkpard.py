@@ -16,6 +16,25 @@ vertinimo tikslumui matuoti.
 
 Ko API NEIMAM: pardavejo el. pasto, telefono numerio, vardo ir nuotraukos.
 Tai asmens duomenys, o deal'ui ivertinti jie nereikalingi.
+
+APIMTIS – ISMATUOTA, NEBEKRATOM (2026-10-07)
+Pirkpard yra vienintelis saltinis, patvirtinantis pardavimus, tad kyla natūralus
+noras isgauti is jo daugiau. Patikrinta – gauti nebera ka:
+
+    5 gamintoju uzklausos (dabartines)        -> 98 telefonai
+    visu 19 puslapiu perziurejimas (tuscia    -> 98 telefonai
+      paieska, 1848 skelbimai, 5 % telefonu)
+    papildomos uzklausos: apple, samsung,     -> 0 nauju
+      telefonas
+
+Visoms gamintoju uzklausoms API grazina `last_page: 1`, tad PAGES ju nekerpa.
+„apple" randa 117 irasu, o „iphone" 91, bet telefonu aibe ta pati – paieska
+fuzzy, tad didesni `total` skaiciai yra triuksmas (pvz. „nokia" randa 649).
+
+Isvada: Pirkpard isnaudotas 100 %, ir jame yra ~98 telefonai. Tai kartu yra
+patvirtintu pardavimu VIRSUTINE RIBA is sio saltinio. Jei reikia daugiau
+patvirtinimu, reikia NAUJO saltinio, kuris sako „parduota" – Pirkpard
+intensyvesnis naudojimas neduos nieko.
 """
 
 import json

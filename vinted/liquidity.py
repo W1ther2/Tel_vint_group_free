@@ -53,11 +53,13 @@ def outcome(e, day, window):
     return None
 
 
-def learn(items, day, window=None, min_samples=None):
+def learn(items, day, window=None, min_samples=None, min_sales=None):
     """{grupe: {"n", "sold", "rate", "enough"}} + {"day", "window", "unknown"}."""
     c = config.cfg
     window = int(window or c.get("SALE_FACT_DAYS", 7))
     min_samples = int(min_samples or c.get("SALE_FACT_MIN_SAMPLES", 30))
+    if min_sales is None:
+        min_sales = int(c.get("SALE_FACT_MIN_SALES", 5))
     groups = {name: [0, 0] for *_, name in BUCKETS}
     unknown = 0
     for e in items.values():
@@ -73,8 +75,19 @@ def learn(items, day, window=None, min_samples=None):
         g = groups[bucket_of(e["p"] / qa)]
         g[0] += 1
         g[1] += o
+    # "enough" = ar grupes `rate` jau galima kuo nors tiketi.
+    #
+    # Pirma versija tikrino tik `n >= min_samples`, t. y. STEBEJIMU kieki. Gyvai
+    # (2026-10-07) tai duodavo: "<0,85": n=37, sold=0, rate=0.0, enough=true. Bet
+    # 0 pardavimu is 37 nereiskia „neparsiduoda" – reiskia „dar neturim ka
+    # matuoti". Is viso visose grupese tuomet buvo 3 pardavimai, o tris ketvirtis
+    # grupiu rodesi kaip „pakanka".
+    #
+    # Rodiklis, kuris remiasi santykiu, negali buti laikomas ismatuotu, kol nera
+    # pakankamai PACIU IVYKIU: su 0 pardavimu rate=0 yra duomenu nebuvimas, o ne
+    # nulinis pardavimas. Todel reikalaujam abieju – ir stebejimu, ir pardavimu.
     out = {name: {"n": n, "sold": s, "rate": round(s / n, 4) if n else None,
-                  "enough": n >= min_samples}
+                  "enough": n >= min_samples and s >= min_sales}
            for name, (n, s) in groups.items()}
     out.update({"day": day, "window": window, "unknown": unknown})
     return out
@@ -89,5 +102,7 @@ def describe(fact):
             parts.append(f"{name}: {g['sold']}/{g['n']}" + ("" if g["enough"] else "*"))
     if not parts:
         return f"Pardavimo faktas (per {fact.get('window')} d.): dar nera duomenu"
+    total = sum((fact.get(name) or {}).get("sold") or 0 for *_, name in BUCKETS)
     return (f"Pardavimo faktas (patvirtinta per {fact['window']} d., kaina/rinka): "
-            + ", ".join(parts) + f"; nezinoma {fact['unknown']} (* – per maza imtis)")
+            + ", ".join(parts) + f"; nezinoma {fact['unknown']}"
+            + f" (is viso {total} patvirtintu; * – dar nepakanka)")

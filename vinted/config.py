@@ -342,6 +342,11 @@ DEFAULTS = {
     # Kol kas tik matuojama – sprendimams nenaudojama.
     "SALE_FACT_DAYS": 7,
     "SALE_FACT_MIN_SAMPLES": 30,
+    # Ir kiek PACIU PARDAVIMU grupeje. Stebejimu kiekio neuztenka: gyvai (2026-10-07)
+    # grupe "<0,85" turejo n=37, sold=0 ir rodesi kaip „pakanka", nors 0 is 37 reiskia
+    # ne „neparsiduoda", o „dar neturim ka matuoti". Santykiu besiremiantis rodiklis
+    # negali buti laikomas ismatuotu, kol nera pakankamai ivykiu, kuriu santykis imamas.
+    "SALE_FACT_MIN_SALES": 5,
     # Rasyti ilgalaiki rinkos archyva (archive/market-YYYY-MM.jsonl.gz). Is jo tikrinama, ar
     # rinkos kaina ir jos patikimumas pasiteisina: `python -m vinted.dataset`.
     "ARCHIVE_ENABLED": True,

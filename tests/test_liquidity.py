@@ -46,7 +46,9 @@ class OutcomeTest(unittest.TestCase):
 
 class LearnTest(unittest.TestCase):
     def setUp(self):
-        reset_config(SALE_FACT_DAYS=7, SALE_FACT_MIN_SAMPLES=3)
+        # MIN_SALES=1 – sie testai tikrina stebejimu riba; pardavimu ribai yra
+        # atskira klase (EnoughNeedsSalesTest).
+        reset_config(SALE_FACT_DAYS=7, SALE_FACT_MIN_SAMPLES=3, SALE_FACT_MIN_SALES=1)
 
     def test_buckets_and_rates(self):
         items = {"a": e(p=80, st="sold", sv=1, sd=95), "b": e(p=82), "c": e(p=84),
@@ -71,6 +73,54 @@ class LearnTest(unittest.TestCase):
         self.assertIn("dar nera duomenu", describe(learn({}, DAY)))
         self.assertIn("<0,85: 0/1*", describe(learn({"b": e(p=80)}, DAY)))
 
+
+
+class EnoughNeedsSalesTest(unittest.TestCase):
+    """„enough" turi reiksti, kad rodikliu galima tiketi.
+
+    Gyvai (2026-10-07) pirma versija rode:
+
+        "<0,85":    n=37, sold=0, rate=0.0,    enough=true
+        "0,85-0,95": n=31, sold=0, rate=0.0,    enough=true
+        "0,95-1,05": n=24, sold=2, rate=0.0833, enough=false
+
+    Trys ketvirciai grupiu skelbesi „pakanka", nors is viso visose grupese buvo
+    3 pardavimai. 0 is 37 nereiskia „neparsiduoda" – reiskia „dar neturim ko
+    matuoti". Santykiu besiremiantis rodiklis negali buti laikomas ismatuotu,
+    kol nera pakankamai PACIU IVYKIU, kuriu santykis imamas. Pavojus realus:
+    jei sprendimas butu priimtas pagal rate=0.0, visa pigiausiu zona butu
+    paskelbta neparduodama remiantis nuliu irodymu."""
+
+    def setUp(self):
+        reset_config(SALE_FACT_DAYS=7, SALE_FACT_MIN_SAMPLES=3, SALE_FACT_MIN_SALES=2)
+
+    def test_many_observations_but_no_sales_is_not_enough(self):
+        items = {str(i): e(p=80) for i in range(10)}          # 10 stebejimu, 0 pardavimu
+        out = learn(items, DAY)
+        self.assertEqual(out["<0,85"]["n"], 10)
+        self.assertEqual(out["<0,85"]["sold"], 0)
+        self.assertFalse(out["<0,85"]["enough"], "0 pardavimu nera matavimas")
+
+    def test_enough_once_there_are_real_sales(self):
+        items = {"a": e(p=80, st="sold", sv=1, sd=95), "b": e(p=81, st="sold", sv=1, sd=95),
+                 "c": e(p=82), "d": e(p=83)}
+        out = learn(items, DAY)
+        self.assertEqual((out["<0,85"]["n"], out["<0,85"]["sold"]), (4, 2))
+        self.assertTrue(out["<0,85"]["enough"])
+
+    def test_sales_alone_are_not_enough_either(self):
+        """Riba abipuse: 2 pardavimai is 2 stebejimu nera 100 % parduodamumas."""
+        items = {"a": e(p=80, st="sold", sv=1, sd=95), "b": e(p=81, st="sold", sv=1, sd=95)}
+        out = learn(items, DAY)
+        self.assertEqual(out["<0,85"]["rate"], 1.0)
+        self.assertFalse(out["<0,85"]["enough"], "per mazai stebejimu")
+
+    def test_describe_shows_the_total_number_of_confirmations(self):
+        """Log'e turi matytis, kiek IS VISO patvirtintu – tai skaicius, pagal kuri
+        sprendziama, ar visa lentele dar yra triuksmas."""
+        items = {"a": e(p=80, st="sold", sv=1, sd=95), "b": e(p=81)}
+        text = describe(learn(items, DAY))
+        self.assertIn("is viso 1 patvirtintu", text)
 
 
 class RunComputesSaleFactTest(unittest.TestCase):
