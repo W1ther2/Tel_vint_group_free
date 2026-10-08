@@ -19,7 +19,7 @@ from .listing import split_uid
 from .phone import (detect_model, is_accessory, find_defects, extract_storage, extract_battery,
                     CONDITION_FACTOR, estimate_value, estimate_profit, MODEL_ORDER, condition_ok,
                     description_not_phone, min_price, model_wanted, display)
-from .risk import assess_risk, PICKUP_LABEL
+from .risk import assess_risk, cheap_listing_problems, PICKUP_LABEL
 from .sources import build_sources, label as source_label
 from .limiter import rate_floor
 from .sources.vinted_source import VintedSource
@@ -161,6 +161,7 @@ class Run:
         #  "discount" – ar pigiau nei musu ivertinta verte (senasis budas; naudojamas ir
         #               tada, kai palyginti per mazai – pvz. retiems modeliams).
         rank = None
+        cheap_check = False
         if c["DEAL_MODE"] == "rank":
             rank = self.state.market.rank(model, storage, price, exclude=uid)
             if rank is None:
@@ -194,6 +195,13 @@ class Run:
             return self.reject("per pigu (sugedęs / dalims / ne telefonas?)",
                                f"{title[:40]} {money(price)} (riba {money(floor)}, "
                                f"rinka {money(quote.price)})")
+        # Palyginimo nera (retas modelis, Android su spejama verte), tad „kito pigiausio“ patikra
+        # (auksciau) neveikia. Gerokai pigesnis nei rinkos verte (< NO_RANK_STRICT_RATIO) –
+        # neatmetam aklai (pasitaiko ir veikiantis XR uz 35 €), bet aprasymas turi aiskiai sakyti,
+        # kad telefonas veikia, ir neturi buti kitu rizikos pozymiu (2026-10-08: Huawei P40 Pro
+        # uz 65 € prie spejamos 135 € vertes).
+        if rank is None and price < quote.price * c["NO_RANK_STRICT_RATIO"]:
+            cheap_check = True
         self.new_seen[uid] = time.time()
         if c["PAUSED"]:
             # Pauze tikrinam PRIES skelbimo puslapi: kainu istorija toliau kaupiasi
@@ -272,6 +280,11 @@ class Run:
                 return self.reject("nepatikima rinkos kaina",
                                    f"{display(model)} {price:.0f}€, vertė {value:.0f}€ -> atsargiai "
                                    f"{safe:.0f}€ (x{confidence.factor:.2f} {how}, {confidence.reason})")
+            # Verte tik spejama (zemas patikimumas – pvz. Android modelis be pardavimu istorijos):
+            # papildoma aprasymo patikra nuo zemesnes nuolaidos (2026-10-08: Xiaomi Mi 11 uz 60 €
+            # prie spejamos 110 € vertes – 55 %).
+            if confidence.code == "l" and price < quote.price * c["NO_RANK_STRICT_RATIO_GUESS"]:
+                cheap_check = True
 
         # Baterija: nurodyta ir per maza – atmetam, nebent kaina tikrai gera.
         # Nenurodyta – praleidziam, bet kortelėje parasom "nenurodyta".
@@ -329,6 +342,12 @@ class Run:
 
         risk_level, risk_reasons = assess_risk(detail.title or title, description, price, quote.price,
                                                seller, listing.photo_count)
+        if cheap_check:
+            problems = cheap_listing_problems(description, risk_reasons)
+            if problems:
+                return self.reject_bad(uid, "itartinai", "įtartinai pigu (nepraėjo papildomos patikros)",
+                                       f"{display(model)} {money(price)}, rinka {money(quote.price)}: "
+                                       f"{'; '.join(problems)}")
         profit = estimate_profit(price, value, pickup_only=PICKUP_LABEL in risk_reasons,
                                  buyer_fee=getattr(source, "buyer_protection_fee", True),
                                  total_price=listing.total_price)

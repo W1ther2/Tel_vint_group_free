@@ -95,9 +95,12 @@ DEFAULTS = {
     # jau parduoti – su jais lyginti butu tas pats, kas lyginti su nebeegzistuojanciais.
     "RANK_RECENT_DAYS": 2,
     "MIN_DISCOUNT": 0.10,            # bent 10% pigiau nei telefono verte
-    # „Per pigu“ – keturios ribos, kiekviena savo vietoje:
+    # „Per pigu“ – penkios ribos, kiekviena savo vietoje:
     #   HARD_MIN_PRICE_RATIO    – x rinkos kainos: ATMETAMA pries atidarant skelbima (dalys, dezute)
     #   SUSPICIOUS_REJECT_RATIO – x KITO pigiausio tokio pat skelbimo: ATMETAMA („rank“ rezime)
+    #   NO_RANK_STRICT_RATIO    – x rinkos kainos, kai palyginimo nera: siunciama TIK jei aprasyme
+    #                             parasyta, kad veikia, ir nera kitu rizikos pozymiu
+    #   NO_RANK_STRICT_RATIO_GUESS – tas pats, kai verte tik spejama (zemas patikimumas, pvz. Android)
     #   SUSPICIOUS_WARN_RATIO   – x kito pigiausio: siunciama su ⚠️ „Įtartinai pigu“
     #   SUSPICIOUS_PRICE_RATIO  – x rinkos kainos: siunciama, bet rizikos eiluteje prirasoma priezastis
     "HARD_MIN_PRICE_RATIO": 0.40,    # pigiau nei 40% rinkos – beveik visada sugedes/dalims/ne telefonas, atmetama
@@ -174,6 +177,8 @@ DEFAULTS = {
     # Kai skelbimas gerokai pigesnis uz KITA pigiausia – beveik visada kazkas negerai
     # (uzrakintas, be dalies, apgavyste). Santykis su kitu pigiausiu tokiu pat telefonu:
     "SUSPICIOUS_REJECT_RATIO": 0.60, # pigiau nei 60% kito pigiausio – atmesti
+    "NO_RANK_STRICT_RATIO": 0.50,    # be palyginimo pigiau nei 50% rinkos – papildoma aprasymo patikra
+    "NO_RANK_STRICT_RATIO_GUESS": 0.60,  # ta pati patikra nuo 60%, kai rinkos verte tik spejama (patikimumas „l“)
     "SUSPICIOUS_WARN_RATIO": 0.75,   # pigiau nei 75% – siusti, bet pazymeti ⚠️
     # Rodyti kortelej „Pigiausias iš 14 dabar parduodamu tokiu pat".
     #
