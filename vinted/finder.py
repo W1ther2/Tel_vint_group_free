@@ -266,6 +266,12 @@ class Run:
             # pardavimu siam lygiui (p20, zr. confidence.py). Butent taip v45 Android lentele
             # (iki 50 % per auksta) paversdavo normaliai ikainota telefona „nuolaida“.
             # „Pigiausiu“ budas (rank) cia neateina – jo logika nekeiciama.
+            if quote.source == "apytikslė" and c["REQUIRE_MEASURED_PRICE"] \
+                    and getattr(brand_of(model), "key", None) != "apple":
+                # Retas ANDROID modelis (iPhone retiems paliekama): kaina is lenteles, ne is skelbimu ar pardavimu.
+                # 2026-10-08: Huawei P40 Pro 65€ ir Mi 11 60€ atejo vien pagal spejima.
+                return self.reject("nepatikima rinkos kaina",
+                                   f"{display(model)} {price:.0f}€, kaina tik apytikslė (per mažai duomenų)")
             safe = pessimistic(value, confidence)
             if 1 - price / safe < c["MIN_DISCOUNT"]:
                 how = "išmokta" if confidence.learned else "pradinė"

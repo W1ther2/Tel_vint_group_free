@@ -240,5 +240,26 @@ class StrictSelectionTest(unittest.TestCase):
         self.assertIn("Patikimumas:</b> vidutinis", text)
 
 
+class GuessedPriceTest(unittest.TestCase):
+    """2026-10-08: Android deal'ai su „apytiksle“ verte (Huawei P40 Pro, Mi 11) praslydo."""
+
+    def deal_run(self, **over):
+        reset_config(**{"SEARCH_QUERIES": ["Xiaomi Mi 11"], "HEARTBEAT_HOURS": 0, "MIN_SAMPLES": 8,
+                        "MARKET_PERCENTILE": 0.5, "MIN_DISCOUNT": 0.15, "MIN_PROFIT_EUR": 0, **over})
+        with TempDir():
+            cat = [item(1, "Xiaomi Mi 11 128GB", 60, user_id=1)]
+            tg = FakeTelegram()
+            log = run(FakeClient({"Xiaomi Mi 11": cat}), tg)
+            return tg, log
+
+    def test_guessed_price_is_not_enough_for_a_deal(self):
+        tg, log = self.deal_run()
+        self.assertEqual(tg.deals, [], log)
+
+    def test_can_be_turned_off(self):
+        tg, log = self.deal_run(REQUIRE_MEASURED_PRICE=False)
+        self.assertEqual(len(tg.deals), 1, log)
+
+
 if __name__ == "__main__":
     unittest.main()

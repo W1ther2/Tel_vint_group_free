@@ -348,6 +348,9 @@ DEFAULTS = {
     # nuolaida skaiciuojama nuo ATSARGIOS vertes = verte x p20(pardavimo / musu kaina) to
     # lygio. „Pigiausiu“ (rank) logika nekeiciama.
     "CONFIDENCE_STRICT": True,
+    # Nuolaidos budu nesiusti skelbimu, kuriu rinkos kaina tik „apytikslė“ (per mazai skelbimu/
+    # pardavimu, daugiausia Android). Kai duomenu pakanka, kaina tampa „skelbimai“/„parduoti“.
+    "REQUIRE_MEASURED_PRICE": True,
     # Kiek PATVIRTINTU pardavimu su tuometiniu lygiu (qc) reikia, kad lygio reiksme butu
     # ismokta, o ne pradine (confidence.PRIOR).
     "CONFIDENCE_MIN_SAMPLES": 20,
