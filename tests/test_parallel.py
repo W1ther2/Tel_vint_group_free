@@ -1,7 +1,9 @@
-"""Ar saltiniai tikrai dirba vienu metu – matuojant sieninio laikrodzio laika.
+"""Ar saltiniai tikrai dirba vienu metu.
 
 Testai tyciomis naudoja tikras (trumpas) pauzes: be ju lygiagretumo patikrinti
 neimanoma, o su suklastotu miegu testas praeitu ir tada, kai viskas eina paeiliui.
+Tikrinama ne bendra trukme (uzimtame CI serveryje ji svyruoja – testas krisdavo
+atsitiktinai), o ar Vinted ir Pirkpard uzklausu laiko intervalai persidengia.
 """
 import contextlib
 import io
@@ -20,6 +22,18 @@ from vinted.sources.vinted_source import VintedSource
 DELSA = 0.15        # kiek "trunka" viena uzklausa
 
 
+def dirba(laikai, gijos):
+    """Viena netikra uzklausa: pauze + jos laiko intervalas ir gija."""
+    pradzia = time.monotonic()
+    time.sleep(DELSA)
+    laikai.append((pradzia, time.monotonic()))
+    gijos.add(threading.current_thread().name)
+
+
+def persidengia(a, b):
+    return any(x0 < y1 and y0 < x1 for x0, x1 in a for y0, y1 in b)
+
+
 class SlowVinted:
     """Netikras Vinted, kurio kiekviena uzklausa uztrunka."""
     last_error = ""
@@ -28,6 +42,7 @@ class SlowVinted:
     def __init__(self, pages=3, items=6):
         self.pages, self.items = pages, items
         self.gijos = set()
+        self.laikai = []
         self.tikrinti = []
 
     def start(self):
@@ -35,15 +50,13 @@ class SlowVinted:
 
     def fetch_items(self, query, pages, seen=None):
         for _ in range(self.pages):
-            time.sleep(DELSA)
-            self.gijos.add(threading.current_thread().name)
+            dirba(self.laikai, self.gijos)
         return [{"id": 5000 + i, "title": "iPhone 13 128GB",
                  "price": {"amount": "255", "currency_code": "EUR"},
                  "url": f"/items/{5000 + i}", "user": {"id": i}} for i in range(self.items)]
 
     def fetch_item_page(self, url):
-        time.sleep(DELSA)
-        self.gijos.add(threading.current_thread().name)
+        dirba(self.laikai, self.gijos)
         self.tikrinti.append(url)
         return 200, '<meta property="og:description" content="Tvarkingas telefonas"/>', \
             f"https://www.vinted.lt{url}"
@@ -56,10 +69,10 @@ class SlowPirkpard(FakeApi):
     def __init__(self, **kw):
         super().__init__(**kw)
         self.gijos = set()
+        self.laikai = []
 
     def get_json(self, params, tries=3):
-        time.sleep(DELSA)
-        self.gijos.add(threading.current_thread().name)
+        dirba(self.laikai, self.gijos)
         return super().get_json(params)
 
 
@@ -94,13 +107,15 @@ def paleisk(lygiagreciai, **over):
 class ParallelScanTest(unittest.TestCase):
     def test_sources_overlap_in_time(self):
         with TempDir():
-            paeiliui, _, _, _ = paleisk(False)
+            _, _, v1, p1 = paleisk(False)
         with TempDir():
-            lygiagreciai, log, vinted, pirkpard = paleisk(True)
+            _, log, vinted, pirkpard = paleisk(True)
         self.assertIn("Tikrinami lygiagreciai", log)
-        # Lygiagreciai turi buti pastebimai greiciau nei paeiliui
-        self.assertLess(lygiagreciai, paeiliui * 0.9,
-                        f"paeiliui {paeiliui:.2f}s, lygiagreciai {lygiagreciai:.2f}s")
+        self.assertTrue(vinted.laikai and pirkpard.laikai)
+        # Paeiliui – uzklausos niekada nevyksta vienu metu (kitaip patikra nieko nerodytu)
+        self.assertFalse(persidengia(v1.laikai, p1.laikai), "paeiliui uzklausos persidengia")
+        # Lygiagreciai – bent dalis Vinted ir Pirkpard uzklausu vyksta tuo paciu metu
+        self.assertTrue(persidengia(vinted.laikai, pirkpard.laikai), "saltiniai dirbo ne vienu metu")
 
     def test_each_source_runs_in_its_own_thread(self):
         with TempDir():
