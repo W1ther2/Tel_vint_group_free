@@ -298,6 +298,12 @@ DEFECT_PATTERNS = [
     # ir daznos rasybos klaidos: „uzbluokuotas“, „blukuotas“, „uzlockintas“, „lokintas“
     (r"uzbl\w{0,3}k\w*|bl[aou]{1,2}kuot\w*|\blocked\b|uzrakint\w*|(?:uz)?loc?kint\w*",
      "užblokuotas", 0.0),
+    # SIM (operatoriaus) uzraktas: „SIM užraktas“, „su sim užraktu“, „simlock“, „operatoriaus užraktas“,
+    # „tinka tik Tele2 kortelė“ (2026-10-10: iPhone su SIM užraktu nusiųstas kaip -50 %). „Pirktas Telia“ –
+    # ne uzraktas, todel operatorius – tik po „tik“.
+    (r"sim\s?-?(?:uzrakt\w*|lock\w*|blok\w*)|(?:operatori\w*|tinklo) (?:uzrakt\w*|blok\w*)|"
+     r"tik (?:su |\w+ )?(?:tele2|telia|bites?|bitei|pildyk\w*|labas\w*|ezys\w*)\b",
+     "SIM užraktas", 0.0),
     # Be baterijos telefono neisbandysi. „be baterijos keitimo / problemu“ – ne tas pats.
     (r"(?:be|nera|truksta|neturi|isimt\w*|no|without|missing) (?:akum\w*|baterij\w*|batarej\w*|battery)\b"
      r"(?! (?:problem|keit|pakeit|bed|defekt|gedim|nusidev|susidev|sveikat|degrad|isnaud|issues?|replace|health)\w*)",
@@ -355,10 +361,10 @@ _NEGATE_AFTER = {"atristas", "atrista", "atrisiu", "atrisamas",
                  "neturi", "neturiu", "nepastebeta", "nepastebejau", "nerasta", "none"}
 _NEGATE_AFTER_WORDS = 4
 # Uzrakto etiketems paneigimas gali buti ir PRIES zodi: „atrištas nuo iCloud“, „iCloud švarus“.
-_LOCK_LABELS = {"iCloud užraktas", "užblokuotas", "užrakintas kodu"}
+_LOCK_LABELS = {"iCloud užraktas", "užblokuotas", "užrakintas kodu", "SIM užraktas"}
 _UNLINK_STEMS = ("atrist", "atsiet", "atjung", "atsijung", "islogin", "atsilogin", "isjung", "nepririst",
                  "neprisiet", "atrakint", "pasalint", "laisv", "svarus", "svari", "svaru", "clean", "free",
-                 "unlock", "remov")
+                 "unlock", "remov", "nuimt")
 _LOCK_STEMS = ("uzrakint", "uzblok", "uzbl", "blokuot", "blukuot", "locked", "pririst", "prisiet")
 # „Apsauginis stikliukas įskilęs, ekranas sveikas“ – skilo apsauga, ne telefonas
 _CRACK_LABELS = {"skilęs", "įskilęs (cracked)", "sudaužtas"}

@@ -116,6 +116,19 @@ class DefectTest(unittest.TestCase):
                      "bloknotas dovanų", "lokalus pardavimas", "su blokeliu"]:
             self.assertNotIn("užblokuotas", self.labels(text), text)
 
+    def test_sim_lock(self):
+        """2026-10-10: iPhone su SIM užraktu nusiųstas kaip deal'as (-50 %)."""
+        for text in ["SIM užraktas", "Telefonas turi sim užraktą", "parduodu su SIM užraktu", "Sim uzraktas",
+                     "simlock", "sim lock", "operatoriaus užraktas", "tinka tik Tele2 kortelė",
+                     "veikia tik su Telia", "tik Bitės kortelei", "tinklo užraktas"]:
+            self.assertIn("SIM užraktas", self.labels(text), text)
+            self.assertTrue(any(f == 0 for _, f in find_defects(text)), text)
+        for text in ["be SIM užrakto", "neturi sim užrakto", "SIM užrakto nėra", "jokio SIM užrakto",
+                     "no sim lock", "sim lock free", "SIM užraktas nuimtas", "SIM užraktas atrištas",
+                     "pirktas Telia salone", "Tele2 garantija iki 2027", "veikia su visomis kortelėmis",
+                     "simpatiškas telefonas", "simbolinė kaina"]:
+            self.assertNotIn("SIM užraktas", self.labels(text), text)
+
     def test_accessory_anywhere_in_title(self):
         """Gyvas log'as: „Iphone 17 pro case 2€“ buvo skaiciuojamas kaip „per pigus telefonas“."""
         from vinted.phone import is_accessory
